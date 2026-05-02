@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(rustc --version)",
+      "Bash(cargo --version)",
+      "Bash(lsb_release -a)",
+      "Read(//usr/lib/**)",
+      "Bash(curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs)",
+      "Bash(sh -s -- -y)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "WebSearch",
+      "Bash(npm list *)",
+      "Bash(java -version)",
+      "Bash(sdkmanager --list_installed)",
+      "Bash(rustup target *)"
+    ]
+  }
+}
