@@ -1,5 +1,8 @@
 # Agent Instructions
 
+## What is it
+This is a workout tracker/log application.
+
 ## Bumping the version
 
 When the user asks to bump or update the version, update it in all three of these files:
