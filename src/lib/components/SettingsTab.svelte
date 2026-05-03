@@ -1,7 +1,7 @@
 <script lang="ts">
   import { store } from '$lib/store.svelte';
   import QRCode from 'qrcode';
-  import { urgencyColor } from '$lib/utils';
+  import { urgencyColorFromDays } from '$lib/utils';
   import { showToast } from '$lib/toasts.svelte';
 
   // ── Theme & color settings ────────────────────────────────────
@@ -77,7 +77,7 @@
     </div>
   </div>
 
-  <h2 style="margin-top: 1.75rem;">Priority queue colors</h2>
+  <h2 style="margin-top: 1.75rem;">Workout queue colors</h2>
   <p class="settings-hint">
     Controls how quickly the left-hand color strip transitions from green through yellow to red.
   </p>
@@ -118,10 +118,7 @@
 
   <div class="color-preview">
     {#each Array.from({ length: store.settings.redAfterDays + 1 }, (_, i) => i) as day}
-      {@const d = new Date()}
-      {@const _ = d.setDate(d.getDate() - day)}
-      {@const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
-      <div class="preview-swatch" style="background: {urgencyColor(dateStr, store.settings.yellowAfterDays, store.settings.redAfterDays)}">
+      <div class="preview-swatch" style="background: {urgencyColorFromDays(day, store.settings.yellowAfterDays, store.settings.redAfterDays)}">
         <span>{day === 0 ? 'Today' : day === 1 ? '1 day' : `${day} days`}</span>
       </div>
     {/each}
@@ -132,8 +129,8 @@
     <span class="tooltip-wrap">
       <span class="tooltip-icon">?</span>
       <span class="tooltip-box">
-        Remote sync is completely optional — the app works just as well in standalone mode.
-        If you choose to create an account, it's free and anonymous.
+        Remote sync is completely optional — the app works just as well in standalone mode. But this will allow you to sync your data between devices.
+        If you choose to create an account, it's free, anonymous, and literally a single click.
       </span>
     </span>
   </div>
@@ -157,7 +154,7 @@
     </div>
     <div class="sync-actions">
       <button class="btn-outline" onclick={toggleQr}>
-        {showQr ? 'Hide QR code' : 'Link mobile app'}
+        {showQr ? 'Hide QR code' : 'Link another device'}
       </button>
       {#if unlinkPending}
         <div class="sync-unlink-confirm">
