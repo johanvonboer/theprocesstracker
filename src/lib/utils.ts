@@ -29,8 +29,7 @@ export function daysSince(dateStr: string | null): string {
   return `${diff} days ago`;
 }
 
-export function urgencyColor(lastDate: string | null, yellowAfterDays: number, redAfterDays: number): string {
-  const days = lastDate ? calendarDiff(lastDate) : redAfterDays + 1;
+export function urgencyColorFromDays(days: number, yellowAfterDays: number, redAfterDays: number): string {
   if (days <= 0) return 'hsl(120, 75%, 45%)';
   if (days >= redAfterDays) return 'hsl(0, 75%, 45%)';
   if (days <= yellowAfterDays) {
@@ -39,4 +38,18 @@ export function urgencyColor(lastDate: string | null, yellowAfterDays: number, r
   }
   const hue = 60 - ((days - yellowAfterDays) / (redAfterDays - yellowAfterDays)) * 60;
   return `hsl(${hue.toFixed(1)}, 75%, 45%)`;
+}
+
+export function urgencyColor(lastDate: string | null, yellowAfterDays: number, redAfterDays: number): string {
+  const days = lastDate ? calendarDiff(lastDate) : redAfterDays + 1;
+  return urgencyColorFromDays(days, yellowAfterDays, redAfterDays);
+}
+
+// Returns a normalized urgency score: 0 = fresh, 1.0 = at red threshold, >1 = overdue.
+// null lastDate (never done) returns Infinity so it always sorts first.
+export function urgencyScore(lastDate: string | null, yellowAfterDays: number, redAfterDays: number): number {
+  if (!lastDate) return Infinity;
+  const days = calendarDiff(lastDate);
+  if (days <= 0) return 0;
+  return days / redAfterDays;
 }

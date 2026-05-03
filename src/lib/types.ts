@@ -2,6 +2,7 @@ export interface Exercise {
   id: string;
   name: string;
   description?: string;
+  colorOverride?: { yellowAfterDays: number; redAfterDays: number };
   updatedAt: string;
   deletedAt: string | null;
 }

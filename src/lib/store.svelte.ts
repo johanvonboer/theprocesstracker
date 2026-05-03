@@ -3,6 +3,7 @@ import { appDataDir, join } from '@tauri-apps/api/path';
 import type { Exercise, WorkoutEntry, Settings, SyncConfig } from './types';
 import { DEFAULT_SETTINGS } from './types';
 import { SyncManager, loadSyncConfig } from './sync.svelte';
+import { urgencyScore } from './utils';
 
 const EPOCH = new Date(0).toISOString();
 
@@ -89,10 +90,11 @@ class WorkoutStore {
         return { exercise, lastDate: dates[0] ?? null };
       })
       .sort((a, b) => {
-        if (!a.lastDate && !b.lastDate) return 0;
-        if (!a.lastDate) return -1;
-        if (!b.lastDate) return 1;
-        return a.lastDate.localeCompare(b.lastDate);
+        const ya = a.exercise.colorOverride?.yellowAfterDays ?? this.settings.yellowAfterDays;
+        const ra = a.exercise.colorOverride?.redAfterDays   ?? this.settings.redAfterDays;
+        const yb = b.exercise.colorOverride?.yellowAfterDays ?? this.settings.yellowAfterDays;
+        const rb = b.exercise.colorOverride?.redAfterDays   ?? this.settings.redAfterDays;
+        return urgencyScore(b.lastDate, yb, rb) - urgencyScore(a.lastDate, ya, ra);
       });
   }
 
@@ -161,6 +163,15 @@ class WorkoutStore {
       e => e.id !== id && e.exerciseId === entry.exerciseId && e.date === date && !e.deletedAt
     );
     if (!duplicate) { entry.date = date; entry.updatedAt = now(); this.save(); }
+  }
+
+  updateColorOverride(id: string, override: { yellowAfterDays: number; redAfterDays: number } | undefined) {
+    const exercise = this.exercises.find(e => e.id === id);
+    if (!exercise) return;
+    if (override !== undefined) exercise.colorOverride = override;
+    else delete exercise.colorOverride;
+    exercise.updatedAt = now();
+    this.save();
   }
 
   updateSettings(patch: Partial<Settings>) {

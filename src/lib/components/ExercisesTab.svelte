@@ -2,7 +2,7 @@
   import { store } from '$lib/store.svelte';
   import type { Exercise, WorkoutEntry } from '$lib/types';
   import { PenLine, Trash2 } from 'lucide-svelte';
-  import { fmtDate, today } from '$lib/utils';
+  import { fmtDate, today, urgencyColorFromDays } from '$lib/utils';
 
   // ── Add exercise ──────────────────────────────────────────────
   let newName = $state('');
@@ -64,6 +64,13 @@
 
   function toggleHistory(id: string) {
     openHistory[id] = !openHistory[id];
+  }
+
+  // ── Color override collapse ───────────────────────────────────
+  let openColor = $state<Record<string, boolean>>({});
+
+  function toggleColor(id: string) {
+    openColor[id] = !openColor[id];
   }
 
   // ── Edit entry ───────────────────────────────────────────────
@@ -161,6 +168,87 @@
           <button class="desc-text" onclick={() => startEditDesc(exercise)} title="Edit description">{exercise.description}</button>
         {:else}
           <button class="btn-add-desc" onclick={() => startEditDesc(exercise)}>+ Add description</button>
+        {/if}
+
+        <!-- Color thresholds toggle -->
+        <button class="btn-history-toggle" onclick={() => toggleColor(exercise.id)}>
+          Color thresholds
+          <span class="toggle-arrow">{openColor[exercise.id] ? '▲' : '▼'}</span>
+        </button>
+
+        <!-- Collapsible color override panel -->
+        {#if openColor[exercise.id]}
+          {@const ov = exercise.colorOverride}
+          {@const yellow = ov?.yellowAfterDays ?? store.settings.yellowAfterDays}
+          {@const red = ov?.redAfterDays ?? store.settings.redAfterDays}
+          <div class="history-panel color-panel">
+            <label class="override-toggle-row">
+              <input
+                type="checkbox"
+                checked={!!ov}
+                onchange={(e) => {
+                  if ((e.target as HTMLInputElement).checked) {
+                    store.updateColorOverride(exercise.id, {
+                      yellowAfterDays: store.settings.yellowAfterDays,
+                      redAfterDays: store.settings.redAfterDays,
+                    });
+                  } else {
+                    store.updateColorOverride(exercise.id, undefined);
+                  }
+                }}
+              />
+              Custom thresholds
+            </label>
+
+            {#if ov}
+              <div class="threshold-row">
+                <label for="color-yellow-{exercise.id}">Yellow after</label>
+                <div class="slider-row">
+                  <input
+                    id="color-yellow-{exercise.id}"
+                    type="range" min="1" max="6"
+                    value={ov.yellowAfterDays}
+                    oninput={(e) => {
+                      const val = Number((e.target as HTMLInputElement).value);
+                      store.updateColorOverride(exercise.id, {
+                        yellowAfterDays: Math.min(val, ov.redAfterDays - 1),
+                        redAfterDays: ov.redAfterDays,
+                      });
+                    }}
+                  />
+                  <span class="slider-value">{ov.yellowAfterDays}d</span>
+                </div>
+              </div>
+              <div class="threshold-row">
+                <label for="color-red-{exercise.id}">Red after</label>
+                <div class="slider-row">
+                  <input
+                    id="color-red-{exercise.id}"
+                    type="range" min="2" max="7"
+                    value={ov.redAfterDays}
+                    oninput={(e) => {
+                      const val = Number((e.target as HTMLInputElement).value);
+                      store.updateColorOverride(exercise.id, {
+                        yellowAfterDays: ov.yellowAfterDays,
+                        redAfterDays: Math.max(val, ov.yellowAfterDays + 1),
+                      });
+                    }}
+                  />
+                  <span class="slider-value">{ov.redAfterDays}d</span>
+                </div>
+              </div>
+            {:else}
+              <p class="override-hint">Using global defaults — yellow: {store.settings.yellowAfterDays}d, red: {store.settings.redAfterDays}d</p>
+            {/if}
+
+            <div class="color-preview">
+              {#each Array.from({ length: red + 1 }, (_, i) => i) as day}
+                <div class="preview-swatch" style="background: {urgencyColorFromDays(day, yellow, red)}">
+                  <span>{day === 0 ? 'Today' : `${day}d`}</span>
+                </div>
+              {/each}
+            </div>
+          </div>
         {/if}
 
         <!-- History toggle -->
@@ -354,5 +442,58 @@
     opacity: 0.4;
     margin: 0.5rem 0 0;
     text-align: center;
+  }
+
+  .color-panel { display: flex; flex-direction: column; gap: 0.6rem; }
+
+  .override-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .override-hint {
+    font-size: 0.8rem;
+    opacity: 0.45;
+    margin: 0;
+  }
+
+  .threshold-row { display: flex; flex-direction: column; gap: 0.3rem; }
+  .threshold-row label { font-size: 0.82rem; font-weight: 500; opacity: 0.8; }
+
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .slider-row input[type='range'] {
+    flex: 1;
+    border: none;
+    padding: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .slider-value { font-size: 0.82rem; font-weight: 600; min-width: 1.75rem; }
+
+  .color-preview {
+    display: flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+    margin-top: 0.15rem;
+  }
+
+  .preview-swatch {
+    border-radius: 6px;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    white-space: nowrap;
   }
 </style>

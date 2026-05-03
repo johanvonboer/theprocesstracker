@@ -4,7 +4,7 @@
   import { expoInOut } from 'svelte/easing';
   import { fmtDate, daysSince, urgencyColor, today } from '$lib/utils';
 
-  const UNDO_MS = 10_000;
+  const UNDO_MS = 5_000;
   let undoPending = $state<Record<string, { timeoutId: ReturnType<typeof setTimeout>; entryId: string }>>({});
 
   function handleLogToday(exerciseId: string) {
@@ -37,7 +37,7 @@
     {#each store.priorityCue as { exercise, lastDate }, i (exercise.id)}
       <li
         class="priority-card"
-        style="border-left-color: {urgencyColor(lastDate, store.settings.yellowAfterDays, store.settings.redAfterDays)}"
+        style="border-left-color: {urgencyColor(lastDate, exercise.colorOverride?.yellowAfterDays ?? store.settings.yellowAfterDays, exercise.colorOverride?.redAfterDays ?? store.settings.redAfterDays)}"
         animate:flip={{ duration: 650, easing: expoInOut }}
       >
         <div class="priority-rank">{i + 1}</div>
@@ -52,7 +52,7 @@
           </span>
         </div>
         {#if undoPending[exercise.id] !== undefined}
-          <button class="btn-undo" onclick={() => handleUndoLog(exercise.id)}>Undo</button>
+          <button class="btn-undo" style="--undo-ms: {UNDO_MS}ms" onclick={() => handleUndoLog(exercise.id)}>Undo</button>
         {:else}
           <button onclick={() => handleLogToday(exercise.id)}>Log today</button>
         {/if}
@@ -106,7 +106,7 @@
     right: auto;
     width: 100%;
     background: rgba(255, 255, 255, 0.3);
-    animation: btn-countdown 10s linear forwards;
+    animation: btn-countdown var(--undo-ms) linear forwards;
     pointer-events: none;
   }
 
