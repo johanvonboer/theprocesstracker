@@ -14,7 +14,7 @@
     "build:android": "tauri android build",
     "dev:android": "tauri android dev",
     "build:linux": "tauri build --target x86_64-unknown-linux-gnu",
-    "install:linux": "sudo dpkg -i src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/theprocesstracker_${npm_package_version}_amd64.deb",
+    "install:linux": "sudo dpkg -i \"src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/The Process - Workout Tracker_${npm_package_version}_amd64.deb\"",
     "uninstall:linux": "sudo dpkg -r theprocesstracker"
   },
   "license": "MIT",
