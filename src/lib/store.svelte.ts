@@ -166,8 +166,11 @@ class WorkoutStore {
         }),
       });
 
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      if (res.status === 401 || res.status === 403) throw new Error('Sync credentials rejected — try relinking your account.');
+      if (res.status >= 500) throw new Error('The sync server ran into a problem.');
+      if (!res.ok) throw new Error('Sync request failed.');
 
+      if (!this.syncConfig) { this.syncStatus = 'idle'; return; }
       const { syncedAt, changes } = await res.json();
 
       for (const se of (changes.exercises ?? []) as Exercise[]) {
@@ -195,8 +198,12 @@ class WorkoutStore {
       if (this._pendingSync) this.syncToServer();
 
     } catch (e: unknown) {
+      if (!this.syncConfig) { this.syncStatus = 'idle'; return; }
       this.syncStatus = 'error';
-      showToast(`Sync failed: ${e instanceof Error ? e.message : 'unknown error'}`);
+      const msg = e instanceof TypeError ? "Couldn't reach the sync server — will retry."
+        : e instanceof Error ? e.message
+        : 'Sync failed — will retry.';
+      showToast(msg);
       this._scheduleRetry();
     }
   }
@@ -282,8 +289,14 @@ class WorkoutStore {
 
   async createAccount(serverUrl: string): Promise<void> {
     const url = serverUrl.replace(/\/$/, '');
-    const res = await fetch(`${url}/api/v1/account/create`, { method: 'POST' });
-    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    let res: Response;
+    try {
+      res = await fetch(`${url}/api/v1/account/create`, { method: 'POST' });
+    } catch {
+      throw new Error("Couldn't connect to the server — check the server URL.");
+    }
+    if (res.status >= 500) throw new Error('The server ran into a problem — try again later.');
+    if (!res.ok) throw new Error('Account creation failed — try again later.');
     const { guid, secret } = await res.json();
     const config: SyncConfig = { serverUrl: url, guid, secret, lastSyncedAt: null };
     await saveSyncConfig(config);
@@ -292,7 +305,24 @@ class WorkoutStore {
   }
 
   async linkAccount(serverUrl: string, guid: string, secret: string): Promise<void> {
-    const config: SyncConfig = { serverUrl: serverUrl.replace(/\/$/, ''), guid, secret, lastSyncedAt: null };
+    const url = serverUrl.replace(/\/$/, '');
+    let res: Response;
+    try {
+      res = await fetch(`${url}/api/v1/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${guid}.${secret}`,
+        },
+        body: JSON.stringify({ lastSyncedAt: null, changes: { exercises: [], entries: [], settings: null } }),
+      });
+    } catch {
+      throw new Error("Couldn't connect to the server — check the server URL.");
+    }
+    if (res.status === 401 || res.status === 403) throw new Error('Invalid account credentials — check your GUID and secret.');
+    if (res.status >= 500) throw new Error('The server ran into a problem — try again later.');
+    if (!res.ok) throw new Error('Link failed — try again later.');
+    const config: SyncConfig = { serverUrl: url, guid, secret, lastSyncedAt: null };
     await saveSyncConfig(config);
     this.syncConfig = config;
     this.syncToServer();

@@ -8,15 +8,28 @@
   import QRCode from 'qrcode';
   import { toasts, dismissToast, showToast } from '$lib/toasts.svelte';
 
-  const SHINE_MS = 300;
-  let celebrating = $state<Record<string, boolean>>({});
+  const UNDO_MS = 10_000;
+  let undoPending = $state<Record<string, { timeoutId: ReturnType<typeof setTimeout>; entryId: string }>>({});
 
   function handleLogToday(exerciseId: string) {
-    celebrating[exerciseId] = true;
-    setTimeout(() => {
-      store.logEntry(exerciseId, today());
-      celebrating[exerciseId] = false;
-    }, SHINE_MS);
+    const date = today();
+    store.logEntry(exerciseId, date);
+    const entry = store.entries.find(e => e.exerciseId === exerciseId && e.date === date && !e.deletedAt);
+    if (!entry) return;
+
+    if (undoPending[exerciseId] !== undefined) clearTimeout(undoPending[exerciseId].timeoutId);
+    undoPending[exerciseId] = {
+      entryId: entry.id,
+      timeoutId: setTimeout(() => { delete undoPending[exerciseId]; }, UNDO_MS)
+    };
+  }
+
+  function handleUndoLog(exerciseId: string) {
+    const pending = undoPending[exerciseId];
+    if (!pending) return;
+    clearTimeout(pending.timeoutId);
+    store.removeEntry(pending.entryId);
+    delete undoPending[exerciseId];
   }
 
   $effect(() => {
@@ -32,7 +45,7 @@
       tabInitialized = true;
       if (store.activeExercises.length === 0) {
         activeTab = 'exercises';
-        showToast('Welcome! Start by adding your exercises in the Exercises tab.');
+        showToast('Welcome! Start by adding your exercises in the Setup exercises tab.');
       }
     }
   });
@@ -196,30 +209,28 @@
   let linkGuid = $state('');
   let linkSecret = $state('');
   let syncBusy = $state(false);
-  let syncError = $state<string | null>(null);
   let unlinkPending = $state(false);
+  let showSecret = $state(false);
 
   async function handleCreateAccount() {
-    syncError = null;
     syncBusy = true;
     try {
       await store.createAccount(syncServerUrl);
     } catch (e: unknown) {
-      syncError = e instanceof Error ? e.message : 'Failed to create account';
+      showToast(e instanceof Error ? e.message : 'Failed to create account');
     } finally {
       syncBusy = false;
     }
   }
 
   async function handleLinkAccount() {
-    syncError = null;
     syncBusy = true;
     try {
       await store.linkAccount(syncServerUrl, linkGuid.trim(), linkSecret.trim());
       linkGuid = '';
       linkSecret = '';
     } catch (e: unknown) {
-      syncError = e instanceof Error ? e.message : 'Failed to link account';
+      showToast(e instanceof Error ? e.message : 'Failed to link account');
     } finally {
       syncBusy = false;
     }
@@ -286,7 +297,7 @@
         class="tab"
         class:active={activeTab === 'exercises'}
         onclick={() => (activeTab = 'exercises')}
-      >Exercises</button>
+      >Setup exercises</button>
       <button
         class="tab"
         class:active={activeTab === 'settings'}
@@ -432,7 +443,7 @@
   <!-- ── Priority queue tab ────────────────────────────────────── -->
   {:else if activeTab === 'priority'}
     {#if store.activeExercises.length === 0}
-      <p class="empty">Add exercises in the Exercises tab first.</p>
+      <p class="empty">Add exercises in the Setup exercises tab first.</p>
     {:else}
       <p class="priority-hint">Exercises you've gone the longest without are listed first.</p>
       <ol class="priority-list">
@@ -442,9 +453,6 @@
             style="border-left-color: {urgencyColor(lastDate)}"
             animate:flip={{ duration: 650, easing: expoInOut }}
           >
-            {#if celebrating[exercise.id]}
-              <div class="shine-overlay" aria-hidden="true"></div>
-            {/if}
             <div class="priority-rank">{i + 1}</div>
             <div class="priority-info">
               <span class="priority-name">{exercise.name}</span>
@@ -456,7 +464,11 @@
                 {/if}
               </span>
             </div>
-            <button onclick={() => handleLogToday(exercise.id)}>Log today</button>
+            {#if undoPending[exercise.id] !== undefined}
+              <button class="btn-undo" onclick={() => handleUndoLog(exercise.id)}>Undo</button>
+            {:else}
+              <button onclick={() => handleLogToday(exercise.id)}>Log today</button>
+            {/if}
           </li>
         {/each}
       </ol>
@@ -491,7 +503,7 @@
         <div class="slider-row">
           <input
             id="yellow-days"
-            type="range" min="1" max="13"
+            type="range" min="1" max="6"
             value={store.settings.yellowAfterDays}
             oninput={(e) => {
               const val = Number((e.target as HTMLInputElement).value);
@@ -508,7 +520,7 @@
         <div class="slider-row">
           <input
             id="red-days"
-            type="range" min="2" max="14"
+            type="range" min="2" max="7"
             value={store.settings.redAfterDays}
             oninput={(e) => {
               const val = Number((e.target as HTMLInputElement).value);
@@ -548,6 +560,14 @@
           <div class="sync-info">
             <span class="sync-server">{store.syncConfig.serverUrl}</span>
             <span class="sync-guid">GUID: {store.syncConfig.guid}</span>
+            <span class="sync-secret-row">
+              <span class="sync-secret-value">
+                {showSecret ? store.syncConfig.secret : '••••••••••••••••'}
+              </span>
+              <button class="btn-reveal" onclick={() => (showSecret = !showSecret)}>
+                {showSecret ? 'Hide secret' : 'Reveal secret'}
+              </button>
+            </span>
           </div>
         </div>
         <div class="sync-actions">
@@ -606,9 +626,6 @@
           </div>
         </details>
 
-        {#if syncError}
-          <p class="sync-error">{syncError}</p>
-        {/if}
       {/if}
     </section>
   {/if}
@@ -618,26 +635,45 @@
   :global(*, *::before, *::after) { box-sizing: border-box; }
 
   :global(html) {
-    --bg: #f4f4f5;
+    /* Brand palette */
+    --color-primary:   #2C3947;
+    --color-secondary: #547A95;
+    --color-accent1:   #C2A56D;
+    --color-accent2:   #E8EDF2;
+
+    /* Light mode */
+    --bg: #E8EDF2;
     --text: #1a1a1a;
-    --card-bg: #fff;
-    --card-border: rgba(128, 128, 128, 0.18);
+    --card-bg: #ffffff;
+    --card-border: rgba(44, 57, 71, 0.14);
+    --interactive: #2C3947;
+    --interactive-hover: #547A95;
+    --interactive-text: #ffffff;
+    --accent: #547A95;
   }
 
   @media (prefers-color-scheme: dark) {
     :global(html:not([data-theme='light'])) {
-      --bg: #18181b;
-      --text: #e4e4e7;
-      --card-bg: #27272a;
-      --card-border: rgba(255, 255, 255, 0.08);
+      --bg: #2C3947;
+      --text: #E8EDF2;
+      --card-bg: #547A95;
+      --card-border: rgba(232, 237, 242, 0.08);
+      --interactive: #C2A56D;
+      --interactive-hover: #a88a52;
+      --interactive-text: #1a1a1a;
+      --accent: #C2A56D;
     }
   }
 
   :global(html[data-theme='dark']) {
-    --bg: #18181b;
-    --text: #e4e4e7;
-    --card-bg: #27272a;
-    --card-border: rgba(255, 255, 255, 0.08);
+    --bg: #2C3947;
+    --text: #E8EDF2;
+    --card-bg: #547A95;
+    --card-border: rgba(232, 237, 242, 0.08);
+    --interactive: #C2A56D;
+    --interactive-hover: #a88a52;
+    --interactive-text: #1a1a1a;
+    --accent: #C2A56D;
   }
 
   :global(body) {
@@ -678,7 +714,7 @@
     display: inline-block;
     padding: 0.1em 0.35em;
     background-position: 0 0, 0 0.5em, 0.5em -0.5em, -0.5em 0;
-    color: #000;
+    color: var(--text);
   }
 
   .app-subtitle {
@@ -723,8 +759,9 @@
   }
 
   .sync-icon-btn:hover { opacity: 0.75; background: none; }
+  .sync-icon-btn:not(.is-error):not(.is-syncing) { opacity: 1; color: #22c55e; }
   .sync-icon-btn.is-error { opacity: 1; color: #ef4444; }
-  .sync-icon-btn.is-syncing { opacity: 0.6; }
+  .sync-icon-btn.is-syncing { opacity: 0.6; color: inherit; }
   .sync-icon-btn.is-syncing :global(svg) { animation: spin 1s linear infinite; }
 
   @keyframes spin {
@@ -799,7 +836,7 @@
   }
 
   .tab:hover { opacity: 0.8; background: none; }
-  .tab.active { opacity: 1; border-bottom-color: #3b82f6; }
+  .tab.active { opacity: 1; border-bottom-color: var(--accent); }
 
   /* ── Inputs & buttons ── */
   input[type='text'],
@@ -815,14 +852,14 @@
   }
 
   input[type='text']:focus,
-  input[type='date']:focus { border-color: #3b82f6; }
+  input[type='date']:focus { border-color: var(--accent); }
 
   button {
     padding: 0.5rem 1rem;
     border-radius: 8px;
     border: 1px solid transparent;
-    background: #3b82f6;
-    color: #fff;
+    background: var(--interactive);
+    color: var(--interactive-text);
     font-size: 0.9rem;
     font-family: inherit;
     font-weight: 500;
@@ -830,7 +867,7 @@
     transition: background 0.15s;
   }
 
-  button:hover { background: #2563eb; }
+  button:hover { background: var(--interactive-hover); }
   button:disabled { opacity: 0.4; cursor: default; }
 
   .btn-icon {
@@ -1034,26 +1071,31 @@
     padding: 0.75rem 1rem;
   }
 
-  .shine-overlay {
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      rgba(251, 113, 133, 0.55) 20%,
-      rgba(167, 139, 250, 0.55) 40%,
-      rgba(96, 165, 250, 0.55) 60%,
-      rgba(52, 211, 153, 0.55) 80%,
-      transparent 100%
-    );
-    animation: shine 0.65s ease-in-out forwards; /* duration must match SHINE_MS */
-    pointer-events: none;
-    z-index: 1;
+
+  .btn-undo {
+    position: relative;
+    overflow: hidden;
+    background: var(--color-accent1);
+    color: #1a1a1a;
+    min-width: 5.5rem;
   }
 
-  @keyframes shine {
-    from { transform: translateX(-100%); }
-    to   { transform: translateX(100%); }
+  .btn-undo:hover { background: #a88a52; }
+
+  .btn-undo::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    right: auto;
+    width: 100%;
+    background: rgba(255, 255, 255, 0.3);
+    animation: btn-countdown 10s linear forwards;
+    pointer-events: none;
+  }
+
+  @keyframes btn-countdown {
+    from { width: 100%; }
+    to   { width: 0%; }
   }
 
 
@@ -1102,7 +1144,7 @@
   }
 
   .theme-btn:hover { background: rgba(128,128,128,0.18); }
-  .theme-btn.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+  .theme-btn.active { background: var(--interactive); color: var(--interactive-text); border-color: var(--interactive); }
 
   .settings-hint {
     font-size: 0.85rem;
@@ -1132,7 +1174,7 @@
     flex: 1;
     border: none;
     padding: 0;
-    accent-color: #3b82f6;
+    accent-color: var(--accent);
     cursor: pointer;
   }
 
@@ -1255,6 +1297,39 @@
     text-overflow: ellipsis;
   }
 
+  .sync-secret-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.1rem;
+  }
+
+  .sync-secret-value {
+    font-size: 0.78rem;
+    font-family: monospace;
+    opacity: 0.55;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .btn-reveal {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--accent);
+    opacity: 0.8;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .btn-reveal:hover { opacity: 1; background: none; }
+
   .sync-unlink-confirm {
     display: flex;
     align-items: center;
@@ -1293,11 +1368,6 @@
     background: rgba(128, 128, 128, 0.25);
   }
 
-  .sync-error {
-    font-size: 0.85rem;
-    color: #ef4444;
-    margin: 0.5rem 0 0;
-  }
 
   .sync-advanced {
     margin-top: 1rem;
@@ -1343,7 +1413,7 @@
 
   .qr-warning {
     font-size: 0.8rem;
-    color: #f59e0b;
+    color: var(--color-accent1);
     text-align: center;
     margin: 0;
   }
