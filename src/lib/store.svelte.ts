@@ -82,6 +82,7 @@ class WorkoutStore {
 
   get priorityCue(): Array<{ exercise: Exercise; lastDate: string | null }> {
     return this.activeExercises
+      .filter(e => !e.disabled)
       .map(exercise => {
         const dates = this.entries
           .filter(e => e.exerciseId === exercise.id && !e.deletedAt)
@@ -127,6 +128,14 @@ class WorkoutStore {
     this.entries
       .filter(e => e.exerciseId === id && !e.deletedAt)
       .forEach(e => { e.deletedAt = t; e.updatedAt = t; });
+    this.save();
+  }
+
+  toggleDisableExercise(id: string) {
+    const exercise = this.exercises.find(e => e.id === id);
+    if (!exercise) return;
+    exercise.disabled = !exercise.disabled;
+    exercise.updatedAt = now();
     this.save();
   }
 

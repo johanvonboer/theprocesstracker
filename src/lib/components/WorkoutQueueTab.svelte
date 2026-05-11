@@ -29,8 +29,8 @@
   }
 </script>
 
-{#if store.activeExercises.length === 0}
-  <p class="empty">Add exercises in the Setup exercises tab first.</p>
+{#if store.priorityCue.length === 0}
+  <p class="empty">{store.activeExercises.length === 0 ? 'Add exercises in the Setup exercises tab first.' : 'All exercises are disabled. Enable some in the Setup exercises tab.'}</p>
 {:else}
   <p class="priority-hint">Exercises you've gone the longest without are listed first.</p>
   <ol class="priority-list">

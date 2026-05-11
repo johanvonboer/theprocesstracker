@@ -1,7 +1,7 @@
 <script lang="ts">
   import { store } from '$lib/store.svelte';
   import type { Exercise, WorkoutEntry } from '$lib/types';
-  import { PenLine, Trash2 } from 'lucide-svelte';
+  import { PenLine, Trash2, Eye, EyeOff } from 'lucide-svelte';
   import { fmtDate, today, urgencyColorFromDays } from '$lib/utils';
 
   // ── Add exercise ──────────────────────────────────────────────
@@ -121,7 +121,7 @@
   <ul class="exercise-list">
     {#each [...store.activeExercises].sort((a, b) => a.name.localeCompare(b.name)) as exercise (exercise.id)}
       {@const entries = store.entriesFor(exercise.id)}
-      <li class="exercise-card">
+      <li class="exercise-card" class:exercise-disabled={exercise.disabled} style="border-left-color: {exercise.disabled ? '#6b7280' : '#3b82f6'}">
         <div class="card-header">
           {#if editingId === exercise.id}
             <input
@@ -139,6 +139,9 @@
           {:else}
             <h2>{exercise.name}</h2>
             <div class="header-actions">
+              <button class="btn-icon btn-ghost" onclick={() => store.toggleDisableExercise(exercise.id)} title={exercise.disabled ? 'Enable' : 'Disable'}>
+                {#if exercise.disabled}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
+              </button>
               <button class="btn-icon btn-ghost" onclick={() => startRename(exercise)} title="Rename"><PenLine size={14} /></button>
               {#if pendingDeleteExercise === exercise.id}
                 <div class="delete-confirm">
@@ -330,8 +333,13 @@
   .exercise-card {
     background: var(--card-bg);
     border: 1px solid var(--card-border);
+    border-left: 4px solid transparent;
     border-radius: 12px;
     padding: 1rem 1.25rem;
+  }
+
+  .exercise-card.exercise-disabled {
+    opacity: 0.6;
   }
 
   .card-header {

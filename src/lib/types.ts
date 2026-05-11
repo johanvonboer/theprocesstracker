@@ -3,6 +3,7 @@ export interface Exercise {
   name: string;
   description?: string;
   colorOverride?: { yellowAfterDays: number; redAfterDays: number };
+  disabled?: boolean;
   updatedAt: string;
   deletedAt: string | null;
 }
