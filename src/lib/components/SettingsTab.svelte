@@ -1,6 +1,7 @@
 <script lang="ts">
   import { store } from '$lib/store.svelte';
   import QRCode from 'qrcode';
+  import QrScanner from 'qr-scanner';
   import { urgencyColorFromDays } from '$lib/utils';
   import { showToast } from '$lib/toasts.svelte';
 
@@ -16,9 +17,89 @@
   let syncBusy = $state(false);
   let unlinkPending = $state(false);
   let showSecret = $state(false);
+  let showManualInput = $state(false);
 
-  async function toggleQr() {
-    if (showQr) { showQr = false; qrDataUrl = null; return; }
+  const isAndroid = navigator.userAgent.includes('Android');
+  let hasCamera = $state<boolean | null>(null);
+
+  $effect(() => {
+    if (isAndroid) { hasCamera = true; return; }
+    QrScanner.hasCamera().then(v => { hasCamera = v; });
+  });
+
+  // Webcam scanner state
+  let showScanOverlay = $state(false);
+  let scanVideoEl = $state<HTMLVideoElement | null>(null);
+  let qrScanner: QrScanner | null = null;
+
+  $effect(() => {
+    if (!showScanOverlay || !scanVideoEl || isAndroid) return;
+    qrScanner = new QrScanner(
+      scanVideoEl,
+      (result) => handleScannedContent(result.data),
+      { returnDetailedScanResult: true, highlightScanRegion: true },
+    );
+    qrScanner.start().catch(() => {
+      showToast('Could not access camera');
+      closeScanOverlay();
+    });
+    return () => { qrScanner?.destroy(); qrScanner = null; };
+  });
+
+  function closeScanOverlay() { showScanOverlay = false; }
+
+  async function handleScannedContent(raw: string) {
+    qrScanner?.stop();
+    closeScanOverlay();
+    syncBusy = true;
+    try {
+      const url = new URL(raw.replace(/^intent:\/\//, 'https://'));
+      const guid = url.searchParams.get('guid');
+      const secret = url.searchParams.get('secret');
+      const server = url.searchParams.get('server');
+      if (!guid || !secret || !server) {
+        showToast('Invalid QR code — could not find account credentials');
+        return;
+      }
+      await store.linkAccount(server, guid, secret);
+      showToast('Account linked successfully', { type: 'info' });
+    } catch {
+      showToast('Invalid QR code — could not find account credentials');
+    } finally {
+      syncBusy = false;
+    }
+  }
+
+  async function scanAndLink() {
+    if (isAndroid) {
+      syncBusy = true;
+      try {
+        const { scan, checkPermissions, requestPermissions, Format } = await import('@tauri-apps/plugin-barcode-scanner');
+        let permission = await checkPermissions();
+        if (permission !== 'granted') {
+          permission = await requestPermissions();
+        }
+        if (permission !== 'granted') {
+          showToast('Camera permission is required to scan QR codes');
+          return;
+        }
+        const result = await scan({ windowed: false, formats: [Format.QRCode] });
+        await handleScannedContent(result.content);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : typeof e === 'string' ? e : JSON.stringify(e);
+        console.error('Scan error:', e);
+        if (msg !== 'scan cancelled') {
+          showToast(msg || 'Failed to scan QR code');
+        }
+      } finally {
+        syncBusy = false;
+      }
+    } else {
+      showScanOverlay = true;
+    }
+  }
+
+  async function openQr() {
     const { guid, secret, serverUrl } = store.syncConfig!;
     const playStoreUrl = 'https://play.google.com/store/apps/details?id=com.theprocesstracker.app';
     const intentUrl =
@@ -28,19 +109,22 @@
       `#Intent;scheme=theprocesstracker;package=com.theprocesstracker.app` +
       `;S.browser_fallback_url=${encodeURIComponent(playStoreUrl)};end`;
     qrDataUrl = await QRCode.toDataURL(intentUrl, {
-      width: 240,
+      width: 300,
       margin: 2,
       color: { dark: '#000000', light: '#ffffff' },
     });
     showQr = true;
   }
 
+  function closeQr() { showQr = false; qrDataUrl = null; }
+
   async function handleCreateAccount() {
     syncBusy = true;
     try {
       await store.createAccount(syncServerUrl);
+      showToast('Account created and sync activated', { type: 'info' });
     } catch (e: unknown) {
-      showToast(e instanceof Error ? e.message : 'Failed to create account');
+      showToast(e instanceof Error ? e.message : String(e) || 'Failed to create account');
     } finally {
       syncBusy = false;
     }
@@ -50,6 +134,7 @@
     syncBusy = true;
     try {
       await store.linkAccount(syncServerUrl, linkGuid.trim(), linkSecret.trim());
+      showToast('Account linked successfully', { type: 'info' });
       linkGuid = '';
       linkSecret = '';
     } catch (e: unknown) {
@@ -58,6 +143,7 @@
       syncBusy = false;
     }
   }
+
 </script>
 
 <section class="settings">
@@ -153,13 +239,11 @@
       </div>
     </div>
     <div class="sync-actions">
-      <button class="btn-outline" onclick={toggleQr}>
-        {showQr ? 'Hide QR code' : 'Link another device'}
-      </button>
-      {#if unlinkPending}
+      <button class="btn-outline" onclick={openQr}>Link another device</button>
+{#if unlinkPending}
         <div class="sync-unlink-confirm">
           <span>Unlink?</span>
-          <button class="btn-icon btn-danger" onclick={() => { store.unlinkAccount(); unlinkPending = false; showQr = false; qrDataUrl = null; }} title="Confirm">✓</button>
+          <button class="btn-icon btn-danger" onclick={() => { store.unlinkAccount(); unlinkPending = false; closeQr(); }} title="Confirm">✓</button>
           <button class="btn-icon btn-ghost" onclick={() => (unlinkPending = false)} title="Cancel">✗</button>
         </div>
       {:else}
@@ -167,44 +251,65 @@
       {/if}
     </div>
 
-    {#if showQr && qrDataUrl}
-      <div class="qr-panel">
-        <img src={qrDataUrl} alt="Account linking QR code" class="qr-code" />
-        <p class="qr-hint">Scan with your Android phone. Opens the app if installed, or takes you to the Play Store.</p>
-        <p class="qr-warning">Keep this QR code private — it contains your account credentials.</p>
-      </div>
-    {/if}
   {:else}
     <button onclick={handleCreateAccount} disabled={syncBusy || !syncServerUrl.trim()}>
-      {syncBusy ? 'Creating…' : 'Create new account'}
+      {syncBusy ? 'Creating…' : 'Activate remote sync with new account'}
     </button>
 
     <div class="sync-divider">or link an existing account</div>
 
-    <div class="setting-row">
-      <label for="link-guid">GUID</label>
-      <input id="link-guid" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" bind:value={linkGuid} />
-    </div>
-    <div class="setting-row">
-      <label for="link-secret">Secret</label>
-      <input id="link-secret" type="text" placeholder="64-character secret key" bind:value={linkSecret} />
-    </div>
-    <button
-      onclick={handleLinkAccount}
-      disabled={syncBusy || !syncServerUrl.trim() || !linkGuid.trim() || !linkSecret.trim()}
-    >
-      {syncBusy ? 'Linking…' : 'Link account'}
+    {#if hasCamera}
+      <button onclick={scanAndLink} disabled={syncBusy}>Scan QR code</button>
+    {/if}
+
+    <button class="btn-outline" onclick={() => (showManualInput = !showManualInput)}>
+      Advanced
     </button>
 
-    <details class="sync-advanced">
-      <summary>Advanced</summary>
-      <div class="setting-row">
-        <label for="sync-server-url">Server URL</label>
-        <input id="sync-server-url" type="text" bind:value={syncServerUrl} />
+    {#if showManualInput}
+      <div class="manual-input-expanded">
+        <div class="setting-row">
+          <label for="link-guid">GUID</label>
+          <input id="link-guid" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" bind:value={linkGuid} />
+        </div>
+        <div class="setting-row">
+          <label for="link-secret">Secret</label>
+          <input id="link-secret" type="text" placeholder="64-character secret key" bind:value={linkSecret} />
+        </div>
+        <div class="setting-row">
+          <label for="sync-server-url">Server URL</label>
+          <input id="sync-server-url" type="text" bind:value={syncServerUrl} />
+        </div>
+        <button
+          onclick={handleLinkAccount}
+          disabled={syncBusy || !syncServerUrl.trim() || !linkGuid.trim() || !linkSecret.trim()}
+        >
+          {syncBusy ? 'Linking…' : 'Link account'}
+        </button>
       </div>
-    </details>
+    {/if}
   {/if}
 </section>
+
+{#if showScanOverlay}
+  <div class="qr-overlay">
+    <button class="qr-back" onclick={closeScanOverlay}>← Back</button>
+    <div class="qr-content">
+      <video bind:this={scanVideoEl} class="scan-video"></video>
+    </div>
+  </div>
+{/if}
+
+{#if showQr && qrDataUrl}
+  <div class="qr-overlay">
+    <button class="qr-back" onclick={closeQr}>← Back</button>
+    <div class="qr-content">
+      <img src={qrDataUrl} alt="Account linking QR code" class="qr-image" />
+      <p class="qr-hint">Scan with your Android phone. Opens the app if installed, or takes you to the Play Store.</p>
+      <p class="qr-warning">Keep this QR code private — it contains your account credentials.</p>
+    </div>
+  </div>
+{/if}
 
 <style>
   .settings h2 { margin: 0 0 0.35rem; font-size: 1.05rem; }
@@ -454,38 +559,57 @@
     background: rgba(128, 128, 128, 0.25);
   }
 
-  .sync-advanced { margin-top: 1rem; }
+  .manual-input-expanded { padding-top: 0.75rem; }
 
-  .sync-advanced summary {
-    cursor: pointer;
-    font-size: 0.85rem;
-    color: var(--text-muted, #6b7280);
-    user-select: none;
+.qr-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
   }
 
-  .sync-advanced .setting-row { margin-top: 0.5rem; }
+  .qr-back {
+    align-self: flex-start;
+    background: none;
+    border: none;
+    padding: 1rem 1.25rem;
+    font-size: 1rem;
+    color: inherit;
+    opacity: 0.7;
+    cursor: pointer;
+  }
 
-  .qr-panel {
-    margin-top: 1rem;
+  .qr-back:hover { opacity: 1; background: none; }
+
+  .qr-content {
+    flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.6rem;
+    justify-content: center;
+    gap: 1.25rem;
+    padding: 1rem 2rem 3rem;
   }
 
-  .qr-code { border-radius: 10px; display: block; }
+  .qr-image { border-radius: 12px; display: block; max-width: 100%; }
+
+  .scan-video { width: 100%; max-width: 480px; border-radius: 12px; display: block; }
 
   .qr-hint {
-    font-size: 0.85rem;
+    font-size: 0.9rem;
     opacity: 0.6;
     text-align: center;
     margin: 0;
+    max-width: 280px;
   }
 
   .qr-warning {
-    font-size: 0.8rem;
+    font-size: 0.82rem;
     color: var(--color-accent1);
     text-align: center;
     margin: 0;
+    max-width: 280px;
   }
 </style>

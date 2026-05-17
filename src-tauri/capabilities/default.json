@@ -6,23 +6,24 @@
   "permissions": [
     "core:default",
     "opener:default",
+    "barcode-scanner:default",
     {
       "identifier": "fs:allow-exists",
-      "allow": [{ "path": "$HOME/.local/share/theprocesstracker/**" }]
+      "allow": [{ "path": "$APPDATA/**" }]
     },
     {
       "identifier": "fs:allow-read-text-file",
-      "allow": [{ "path": "$HOME/.local/share/theprocesstracker/**" }]
+      "allow": [{ "path": "$APPDATA/**" }]
     },
     {
       "identifier": "fs:allow-write-text-file",
-      "allow": [{ "path": "$HOME/.local/share/theprocesstracker/**" }]
+      "allow": [{ "path": "$APPDATA/**" }]
     },
     {
       "identifier": "fs:allow-mkdir",
       "allow": [
-        { "path": "$HOME/.local/share/theprocesstracker" },
-        { "path": "$HOME/.local/share/theprocesstracker/**" }
+        { "path": "$APPDATA" },
+        { "path": "$APPDATA/**" }
       ]
     }
   ]
