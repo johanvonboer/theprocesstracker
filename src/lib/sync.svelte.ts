@@ -1,24 +1,28 @@
-import { exists, mkdir, readTextFile } from '@tauri-apps/plugin-fs';
-import { appDataDir, join } from '@tauri-apps/api/path';
-import { invoke } from '@tauri-apps/api/core';
 import type { Exercise, WorkoutEntry, Settings, SyncConfig } from './types';
 import { showToast } from './toasts.svelte';
+import { IS_TAURI } from './platform';
 
-async function getAppDir(): Promise<string> {
-  return appDataDir();
-}
-
-async function getSyncConfigPath(): Promise<string> {
-  return join(await getAppDir(), 'config.json');
-}
+const WEB_SYNC_CONFIG_KEY = 'theprocesstracker-sync-config';
 
 export async function loadSyncConfig(): Promise<SyncConfig | null> {
   try {
-    const path = await getSyncConfigPath();
-    if (await exists(path)) {
-      const data = JSON.parse(await readTextFile(path));
-      if (data?.serverUrl && data?.guid && data?.secret) {
-        return { lastSyncedAt: null, ...data } as SyncConfig;
+    if (IS_TAURI) {
+      const { exists, readTextFile } = await import('@tauri-apps/plugin-fs');
+      const { appDataDir, join } = await import('@tauri-apps/api/path');
+      const path = await join(await appDataDir(), 'config.json');
+      if (await exists(path)) {
+        const data = JSON.parse(await readTextFile(path));
+        if (data?.serverUrl && data?.guid && data?.secret) {
+          return { lastSyncedAt: null, ...data } as SyncConfig;
+        }
+      }
+    } else {
+      const raw = localStorage.getItem(WEB_SYNC_CONFIG_KEY);
+      if (raw) {
+        const data = JSON.parse(raw);
+        if (data?.serverUrl && data?.guid && data?.secret) {
+          return { lastSyncedAt: null, ...data } as SyncConfig;
+        }
       }
     }
   } catch {}
@@ -26,12 +30,23 @@ export async function loadSyncConfig(): Promise<SyncConfig | null> {
 }
 
 export async function saveSyncConfig(config: SyncConfig | null): Promise<void> {
-  const dir = await getAppDir();
-  await mkdir(dir, { recursive: true });
-  await invoke('write_secret_file', {
-    path: await getSyncConfigPath(),
-    content: JSON.stringify(config, null, 2),
-  });
+  if (IS_TAURI) {
+    const { mkdir } = await import('@tauri-apps/plugin-fs');
+    const { invoke } = await import('@tauri-apps/api/core');
+    const { appDataDir, join } = await import('@tauri-apps/api/path');
+    const dir = await appDataDir();
+    await mkdir(dir, { recursive: true });
+    await invoke('write_secret_file', {
+      path: await join(dir, 'config.json'),
+      content: JSON.stringify(config, null, 2),
+    });
+  } else {
+    if (config === null) {
+      localStorage.removeItem(WEB_SYNC_CONFIG_KEY);
+    } else {
+      localStorage.setItem(WEB_SYNC_CONFIG_KEY, JSON.stringify(config));
+    }
+  }
 }
 
 export interface SyncDataRef {
@@ -41,6 +56,21 @@ export interface SyncDataRef {
   saveData(): void;
 }
 
+let _appVersion: string | null = null;
+async function appVersion(): Promise<string> {
+  if (!_appVersion) {
+    if (IS_TAURI) {
+      const { getVersion } = await import('@tauri-apps/api/app');
+      _appVersion = await getVersion();
+    } else {
+      _appVersion = 'web';
+    }
+  }
+  return _appVersion;
+}
+
+const PERIODIC_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+
 export class SyncManager {
   syncConfig = $state<SyncConfig | null>(null);
   syncStatus = $state<'idle' | 'syncing' | 'error'>('idle');
@@ -48,11 +78,25 @@ export class SyncManager {
   private _retryCount = 0;
   private _retryTimer: ReturnType<typeof setTimeout> | null = null;
   private _debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private _periodicTimer: ReturnType<typeof setInterval> | null = null;
   private _pendingSync = false;
   private data: SyncDataRef;
 
   constructor(data: SyncDataRef) {
     this.data = data;
+  }
+
+  startPeriodicSync() {
+    this._stopPeriodicSync();
+    this._periodicTimer = setInterval(() => {
+      if (document.visibilityState === 'visible' && this.syncConfig) {
+        this.syncToServer();
+      }
+    }, PERIODIC_SYNC_INTERVAL_MS);
+  }
+
+  private _stopPeriodicSync() {
+    if (this._periodicTimer) { clearInterval(this._periodicTimer); this._periodicTimer = null; }
   }
 
   debouncedSync() {
@@ -98,6 +142,7 @@ export class SyncManager {
           'Authorization': `Bearer ${guid}.${secret}`,
         },
         body: JSON.stringify({
+          clientVersion: await appVersion(),
           lastSyncedAt: since,
           changes: {
             exercises: changedExercises,
@@ -164,6 +209,7 @@ export class SyncManager {
     await saveSyncConfig(config);
     this.syncConfig = config;
     this.syncToServer();
+    this.startPeriodicSync();
   }
 
   async linkAccount(serverUrl: string, guid: string, secret: string): Promise<void> {
@@ -176,7 +222,7 @@ export class SyncManager {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${guid}.${secret}`,
         },
-        body: JSON.stringify({ lastSyncedAt: null, changes: { exercises: [], entries: [], settings: null } }),
+        body: JSON.stringify({ clientVersion: await appVersion(), lastSyncedAt: null, changes: { exercises: [], entries: [], settings: null } }),
       });
     } catch {
       throw new Error("Couldn't connect to the server — check the server URL.");
@@ -188,6 +234,7 @@ export class SyncManager {
     await saveSyncConfig(config);
     this.syncConfig = config;
     this.syncToServer();
+    this.startPeriodicSync();
   }
 
   async unlinkAccount(): Promise<void> {
@@ -197,5 +244,6 @@ export class SyncManager {
     this._retryCount = 0;
     if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
     if (this._debounceTimer) { clearTimeout(this._debounceTimer); this._debounceTimer = null; }
+    this._stopPeriodicSync();
   }
 }

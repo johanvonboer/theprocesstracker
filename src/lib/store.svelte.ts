@@ -1,52 +1,60 @@
-import { exists, mkdir, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
-import { appDataDir, join } from '@tauri-apps/api/path';
 import type { Exercise, WorkoutEntry, Settings, SyncConfig } from './types';
 import { DEFAULT_SETTINGS } from './types';
 import { SyncManager, loadSyncConfig } from './sync.svelte';
 import { urgencyScore } from './utils';
+import { IS_TAURI } from './platform';
 
 const EPOCH = new Date(0).toISOString();
+const WEB_STORAGE_KEY = 'theprocesstracker';
 
 function now(): string {
   return new Date().toISOString();
 }
 
-async function getDir(): Promise<string> {
-  return appDataDir();
-}
-
-async function getPath(): Promise<string> {
-  return join(await getDir(), 'theprocesstracker.json');
+function normalizeData(d: any): { exercises: Exercise[]; entries: WorkoutEntry[]; settings: Settings } {
+  return {
+    exercises: (d.exercises ?? []).map((e: any) => ({
+      ...e,
+      updatedAt: e.updatedAt ?? EPOCH,
+      deletedAt: e.deletedAt ?? null,
+    })),
+    entries: (d.entries ?? []).map((e: any) => ({
+      ...e,
+      updatedAt: e.updatedAt ?? EPOCH,
+      deletedAt: e.deletedAt ?? null,
+    })),
+    settings: {
+      ...DEFAULT_SETTINGS,
+      ...d.settings,
+      updatedAt: d.settings?.updatedAt ?? EPOCH,
+    },
+  };
 }
 
 async function writeData(exercises: Exercise[], entries: WorkoutEntry[], settings: Settings) {
-  const dir = await getDir();
-  await mkdir(dir, { recursive: true });
-  await writeTextFile(await getPath(), JSON.stringify({ exercises, entries, settings }, null, 2));
+  if (IS_TAURI) {
+    const { mkdir, writeTextFile } = await import('@tauri-apps/plugin-fs');
+    const { appDataDir, join } = await import('@tauri-apps/api/path');
+    const dir = await appDataDir();
+    await mkdir(dir, { recursive: true });
+    await writeTextFile(await join(dir, 'theprocesstracker.json'), JSON.stringify({ exercises, entries, settings }, null, 2));
+  } else {
+    localStorage.setItem(WEB_STORAGE_KEY, JSON.stringify({ exercises, entries, settings }));
+  }
 }
 
 async function readData(): Promise<{ exercises: Exercise[]; entries: WorkoutEntry[]; settings: Settings }> {
   try {
-    const path = await getPath();
-    if (await exists(path)) {
-      const d = JSON.parse(await readTextFile(path));
-      return {
-        exercises: (d.exercises ?? []).map((e: any) => ({
-          ...e,
-          updatedAt: e.updatedAt ?? EPOCH,
-          deletedAt: e.deletedAt ?? null,
-        })),
-        entries: (d.entries ?? []).map((e: any) => ({
-          ...e,
-          updatedAt: e.updatedAt ?? EPOCH,
-          deletedAt: e.deletedAt ?? null,
-        })),
-        settings: {
-          ...DEFAULT_SETTINGS,
-          ...d.settings,
-          updatedAt: d.settings?.updatedAt ?? EPOCH,
-        },
-      };
+    if (IS_TAURI) {
+      const { exists, readTextFile } = await import('@tauri-apps/plugin-fs');
+      const { appDataDir, join } = await import('@tauri-apps/api/path');
+      const path = await join(await appDataDir(), 'theprocesstracker.json');
+      if (await exists(path)) {
+        return normalizeData(JSON.parse(await readTextFile(path)));
+      }
+    } else {
+      const raw = localStorage.getItem(WEB_STORAGE_KEY);
+      if (raw) return normalizeData(JSON.parse(raw));
     }
   } catch {}
   return { exercises: [], entries: [], settings: { ...DEFAULT_SETTINGS } };
@@ -68,7 +76,15 @@ class WorkoutStore {
       this.settings = d.settings;
       this.sync.syncConfig = syncConfig;
       this.ready = true;
-      if (syncConfig) this.sync.syncToServer();
+      if (syncConfig) {
+        this.sync.syncToServer();
+        this.sync.startPeriodicSync();
+      }
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && this.sync.syncConfig) {
+          this.sync.syncToServer();
+        }
+      });
     });
   }
 
