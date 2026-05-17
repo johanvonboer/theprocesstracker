@@ -139,7 +139,7 @@
           {:else}
             <h2>{exercise.name}</h2>
             <div class="header-actions">
-              <button class="btn-icon btn-ghost" onclick={() => store.toggleDisableExercise(exercise.id)} title={exercise.disabled ? 'Enable' : 'Disable'}>
+              <button class="btn-icon btn-ghost" onclick={() => store.toggleDisableExercise(exercise.id)} title={exercise.disabled ? 'Enable: add back to workout queue' : 'Disable - hides it from the workout queue'}>
                 {#if exercise.disabled}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
               </button>
               <button class="btn-icon btn-ghost" onclick={() => startRename(exercise)} title="Rename"><PenLine size={14} /></button>

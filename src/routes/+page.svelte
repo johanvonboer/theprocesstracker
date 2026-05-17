@@ -1,17 +1,16 @@
 <script lang="ts">
   import { store } from '$lib/store.svelte';
-  import { version } from '../../package.json';
   import { Cloud, CloudOff, RefreshCw } from 'lucide-svelte';
   import { toasts, dismissToast, showToast } from '$lib/toasts.svelte';
   import ExercisesTab from '$lib/components/ExercisesTab.svelte';
   import WorkoutQueueTab from '$lib/components/WorkoutQueueTab.svelte';
   import SettingsTab from '$lib/components/SettingsTab.svelte';
-
+  import AboutTab from '$lib/components/AboutTab.svelte';
   $effect(() => {
     document.documentElement.setAttribute('data-theme', store.settings.theme);
   });
 
-  type Tab = 'exercises' | 'priority' | 'settings';
+  type Tab = 'exercises' | 'priority' | 'settings' | 'about';
   let activeTab = $state<Tab>('priority');
   let tabInitialized = false;
 
@@ -20,38 +19,28 @@
       tabInitialized = true;
       if (store.activeExercises.length === 0) {
         activeTab = 'exercises';
-        showToast('Welcome! Start by adding your exercises in the Setup exercises tab.');
+        showToast('Welcome! Start by adding your exercises in the Setup exercises tab.', { type: 'info', persistent: true });
       }
     }
   });
 </script>
 
-<div class="top-right-info">
-  {#if store.syncConfig}
-    <button
-      class="sync-icon-btn"
-      class:is-error={store.syncStatus === 'error'}
-      class:is-syncing={store.syncStatus === 'syncing'}
-      onclick={() => store.manualSync()}
-      title={store.syncStatus === 'error' ? 'Sync failed — click to retry' : store.syncStatus === 'syncing' ? 'Syncing…' : 'Synced'}
-    >
-      {#if store.syncStatus === 'syncing'}
-        <RefreshCw size={11} />
-      {:else if store.syncStatus === 'error'}
-        <CloudOff size={11} />
-      {:else}
-        <Cloud size={11} />
-      {/if}
-    </button>
-  {/if}
-  <span class="version">v{version}</span>
-</div>
 
 <div class="toast-container" aria-live="polite">
   {#each toasts as toast (toast.id)}
-    <div class="toast">
+    <div
+      class="toast"
+      class:toast-info={toast.type === 'info'}
+      class:toast-persistent={toast.persistent}
+      onclick={toast.persistent ? () => dismissToast(toast.id) : undefined}
+      role={toast.persistent ? 'button' : undefined}
+    >
       <span>{toast.message}</span>
-      <button class="toast-dismiss" onclick={() => dismissToast(toast.id)}>✕</button>
+      {#if toast.persistent}
+        <span class="toast-tap-hint">Tap to dismiss</span>
+      {:else}
+        <button class="toast-dismiss" onclick={() => dismissToast(toast.id)}>✕</button>
+      {/if}
     </div>
   {/each}
 </div>
@@ -61,12 +50,32 @@
 {/if}
 <main class:hidden={!store.ready}>
   <header>
-    <h1>The Process</h1>
+    <div class="title-row">
+      <h1>The Process</h1>
+      {#if store.syncConfig}
+        <button
+          class="sync-icon-btn"
+          class:is-error={store.syncStatus === 'error'}
+          class:is-syncing={store.syncStatus === 'syncing'}
+          onclick={() => store.manualSync()}
+          title={store.syncStatus === 'error' ? 'Sync failed — click to retry' : store.syncStatus === 'syncing' ? 'Syncing…' : 'Synced'}
+        >
+          {#if store.syncStatus === 'syncing'}
+            <RefreshCw size={16} />
+          {:else if store.syncStatus === 'error'}
+            <CloudOff size={16} />
+          {:else}
+            <Cloud size={16} />
+          {/if}
+        </button>
+      {/if}
+    </div>
     <p class="app-subtitle">Workout tracker</p>
     <nav class="tabs">
       <button class="tab" class:active={activeTab === 'priority'} onclick={() => (activeTab = 'priority')}>Workout queue</button>
       <button class="tab" class:active={activeTab === 'exercises'} onclick={() => (activeTab = 'exercises')}>Setup exercises</button>
       <button class="tab" class:active={activeTab === 'settings'} onclick={() => (activeTab = 'settings')}>Settings</button>
+      <button class="tab" class:active={activeTab === 'about'} onclick={() => (activeTab = 'about')}>About</button>
     </nav>
   </header>
 
@@ -76,6 +85,8 @@
     <WorkoutQueueTab />
   {:else if activeTab === 'settings'}
     <SettingsTab />
+  {:else if activeTab === 'about'}
+    <AboutTab />
   {/if}
 </main>
 
@@ -235,6 +246,8 @@
     padding: 0.1em 0.35em;
     background-position: 0 0, 0 0.5em, 0.5em -0.5em, -0.5em 0;
     color: var(--text);
+    margin-top: 0;
+    padding-top: 0;
   }
 
   .app-subtitle {
@@ -248,25 +261,15 @@
     text-transform: uppercase;
   }
 
-  /* ── Top-right sync indicator & version ── */
-  .top-right-info {
-    position: fixed;
-    top: 0.75rem;
-    right: 1rem;
+  /* ── Title row with inline sync indicator ── */
+  .title-row {
     display: flex;
     align-items: center;
-    gap: 0.35rem;
-    pointer-events: none;
-  }
-
-  .version {
-    font-size: 0.7rem;
-    opacity: 0.35;
-    letter-spacing: 0.02em;
+    gap: 0.5rem;
   }
 
   .sync-icon-btn {
-    pointer-events: auto;
+    margin-left: auto;
     background: none;
     border: none;
     padding: 0.15rem;
@@ -293,7 +296,7 @@
   /* ── Toasts ── */
   .toast-container {
     position: fixed;
-    bottom: 1.5rem;
+    top: 3.5rem;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
@@ -318,6 +321,19 @@
     min-width: 260px;
     max-width: 420px;
     white-space: pre-wrap;
+  }
+
+  .toast-info { border-left-color: #60a5fa; }
+
+  .toast-persistent { cursor: pointer; }
+  .toast-persistent:hover { background: #2d3748; }
+
+  .toast-tap-hint {
+    margin-left: auto;
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    opacity: 0.4;
+    white-space: nowrap;
   }
 
   .toast-dismiss {
