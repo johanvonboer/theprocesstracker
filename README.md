@@ -1,2 +1,2 @@
 # The Process
-A workout log. That's all.
+A workout tracker. That's all.
