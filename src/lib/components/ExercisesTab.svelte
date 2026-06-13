@@ -69,6 +69,9 @@
   // ── Color override collapse ───────────────────────────────────
   let openColor = $state<Record<string, boolean>>({});
 
+  // ── Sets & reps collapse ──────────────────────────────────────
+  let openSets = $state<Record<string, boolean>>({});
+
   function toggleColor(id: string) {
     openColor[id] = !openColor[id];
   }
@@ -250,6 +253,46 @@
                   <span>{day === 0 ? 'Today' : `${day}d`}</span>
                 </div>
               {/each}
+            </div>
+          </div>
+        {/if}
+
+        <!-- Sets & reps toggle -->
+        <button class="btn-history-toggle" onclick={() => { openSets[exercise.id] = !openSets[exercise.id]; }}>
+          Sets &amp; Reps
+          <span class="toggle-arrow">{openSets[exercise.id] ? '▲' : '▼'}</span>
+        </button>
+
+        {#if openSets[exercise.id]}
+          <div class="history-panel sets-panel">
+            <p class="sets-hint">Optional targets shown in the workout queue. Leave at 0 to disable.</p>
+            <div class="sets-row">
+              <label for="sets-{exercise.id}">Target sets</label>
+              <input
+                id="sets-{exercise.id}"
+                type="number"
+                min="0"
+                max="99"
+                value={exercise.targetSets ?? 0}
+                oninput={(e) => {
+                  const val = parseInt((e.target as HTMLInputElement).value, 10);
+                  store.updateExerciseTargets(exercise.id, val || undefined, exercise.targetReps);
+                }}
+              />
+            </div>
+            <div class="sets-row">
+              <label for="reps-{exercise.id}">Target reps</label>
+              <input
+                id="reps-{exercise.id}"
+                type="number"
+                min="0"
+                max="999"
+                value={exercise.targetReps ?? 0}
+                oninput={(e) => {
+                  const val = parseInt((e.target as HTMLInputElement).value, 10);
+                  store.updateExerciseTargets(exercise.id, exercise.targetSets, val || undefined);
+                }}
+              />
             </div>
           </div>
         {/if}
@@ -453,6 +496,33 @@
   }
 
   .color-panel { display: flex; flex-direction: column; gap: 0.6rem; }
+
+  .sets-panel { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .sets-hint {
+    font-size: 0.78rem;
+    opacity: 0.45;
+    margin: 0;
+  }
+
+  .sets-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .sets-row label {
+    font-size: 0.82rem;
+    font-weight: 500;
+    opacity: 0.8;
+    min-width: 6rem;
+  }
+
+  .sets-row input[type='number'] {
+    width: 4.5rem;
+    padding: 0.3rem 0.5rem;
+    text-align: center;
+  }
 
   .override-toggle-row {
     display: flex;

@@ -12,17 +12,30 @@ function now(): string {
 }
 
 function normalizeData(d: any): { exercises: Exercise[]; entries: WorkoutEntry[]; settings: Settings } {
+  const entries: WorkoutEntry[] = (d.entries ?? []).map((e: any) => ({
+    ...e,
+    updatedAt: e.updatedAt ?? EPOCH,
+    deletedAt: e.deletedAt ?? null,
+  }));
+
+  // Migrate legacy setEntries → entry.sets
+  const legacySetEntries: any[] = (d.setEntries ?? []).filter((s: any) => !s.deletedAt);
+  if (legacySetEntries.length > 0) {
+    for (const entry of entries) {
+      if (entry.sets == null) {
+        const count = legacySetEntries.filter(s => s.exerciseId === entry.exerciseId && s.date === entry.date).length;
+        if (count > 0) entry.sets = count;
+      }
+    }
+  }
+
   return {
     exercises: (d.exercises ?? []).map((e: any) => ({
       ...e,
       updatedAt: e.updatedAt ?? EPOCH,
       deletedAt: e.deletedAt ?? null,
     })),
-    entries: (d.entries ?? []).map((e: any) => ({
-      ...e,
-      updatedAt: e.updatedAt ?? EPOCH,
-      deletedAt: e.deletedAt ?? null,
-    })),
+    entries,
     settings: {
       ...DEFAULT_SETTINGS,
       ...d.settings,
@@ -44,25 +57,60 @@ async function writeData(exercises: Exercise[], entries: WorkoutEntry[], setting
 }
 
 async function readData(): Promise<{ exercises: Exercise[]; entries: WorkoutEntry[]; settings: Settings }> {
-  try {
-    if (IS_TAURI) {
-      const { exists, readTextFile } = await import('@tauri-apps/plugin-fs');
-      const { appDataDir, join } = await import('@tauri-apps/api/path');
-      const path = await join(await appDataDir(), 'theprocesstracker.json');
-      if (await exists(path)) {
-        return normalizeData(JSON.parse(await readTextFile(path)));
-      }
-    } else {
+  if (!IS_TAURI) {
+    try {
       const raw = localStorage.getItem(WEB_STORAGE_KEY);
       if (raw) return normalizeData(JSON.parse(raw));
-    }
-  } catch {}
+    } catch {}
+    return { exercises: [], entries: [], settings: { ...DEFAULT_SETTINGS } };
+  }
+
+  const { exists, readTextFile, writeTextFile, mkdir } = await import('@tauri-apps/plugin-fs');
+  const { appDataDir, join, dirname } = await import('@tauri-apps/api/path');
+  const dir = await appDataDir();
+  await mkdir(dir, { recursive: true });
+  const mainPath = await join(dir, 'theprocesstracker.json');
+
+  // Read from primary location
+  if (await exists(mainPath)) {
+    try {
+      const raw = await readTextFile(mainPath);
+      const data = normalizeData(JSON.parse(raw));
+      if (data.exercises.length > 0 || data.entries.length > 0) {
+        // Back up on every startup so the previous session is always recoverable
+        try { await writeTextFile(await join(dir, 'theprocesstracker.json.bak'), raw); } catch {}
+        return data;
+      }
+    } catch {}
+  }
+
+  // Primary location is empty or missing — check known legacy locations.
+  // $DATA is the parent of $APPDATA (e.g. ~/.local/share/ on Linux), so
+  // dirname(appDataDir()) gives us the sibling directory of the old identifier.
+  const legacyIdentifiers = ['theprocesstracker'];
+  const parentDir = await dirname(dir);
+  for (const id of legacyIdentifiers) {
+    try {
+      const legacyPath = await join(parentDir, id, 'theprocesstracker.json');
+      if (!await exists(legacyPath)) continue;
+      const raw = await readTextFile(legacyPath);
+      const data = normalizeData(JSON.parse(raw));
+      if (data.exercises.length === 0 && data.entries.length === 0) continue;
+      // Migrate to primary location and create startup backup
+      await writeTextFile(mainPath, raw);
+      try { await writeTextFile(await join(dir, 'theprocesstracker.json.bak'), raw); } catch {}
+      return data;
+    } catch {}
+  }
+
   return { exercises: [], entries: [], settings: { ...DEFAULT_SETTINGS } };
 }
 
 class WorkoutStore {
   exercises = $state<Exercise[]>([]);
   entries = $state<WorkoutEntry[]>([]);
+  // restTimers: exerciseId → timestamp when rest started (ephemeral, not persisted)
+  restTimers = $state<Record<string, number>>({});
   settings = $state<Settings>({ ...DEFAULT_SETTINGS });
   ready = $state(false);
 
@@ -170,9 +218,9 @@ class WorkoutStore {
     this.save();
   }
 
-  logEntry(exerciseId: string, date: string) {
+  logEntry(exerciseId: string, date: string, sets?: number, restSeconds?: number) {
     if (!this.entries.some(e => e.exerciseId === exerciseId && e.date === date && !e.deletedAt)) {
-      this.entries.push({ id: crypto.randomUUID(), exerciseId, date, updatedAt: now(), deletedAt: null });
+      this.entries.push({ id: crypto.randomUUID(), exerciseId, date, sets, restSeconds, updatedAt: now(), deletedAt: null });
       this.save();
     }
   }
@@ -189,6 +237,23 @@ class WorkoutStore {
       e => e.id !== id && e.exerciseId === entry.exerciseId && e.date === date && !e.deletedAt
     );
     if (!duplicate) { entry.date = date; entry.updatedAt = now(); this.save(); }
+  }
+
+  startRest(exerciseId: string) {
+    this.restTimers[exerciseId] = Date.now();
+  }
+
+  stopRest(exerciseId: string) {
+    delete this.restTimers[exerciseId];
+  }
+
+  updateExerciseTargets(id: string, targetSets: number | undefined, targetReps: number | undefined) {
+    const exercise = this.exercises.find(e => e.id === id);
+    if (!exercise) return;
+    if (targetSets) exercise.targetSets = targetSets; else delete exercise.targetSets;
+    if (targetReps) exercise.targetReps = targetReps; else delete exercise.targetReps;
+    exercise.updatedAt = now();
+    this.save();
   }
 
   updateColorOverride(id: string, override: { yellowAfterDays: number; redAfterDays: number } | undefined) {

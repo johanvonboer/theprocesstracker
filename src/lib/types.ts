@@ -3,6 +3,8 @@ export interface Exercise {
   name: string;
   description?: string;
   colorOverride?: { yellowAfterDays: number; redAfterDays: number };
+  targetSets?: number;
+  targetReps?: number;
   disabled?: boolean;
   updatedAt: string;
   deletedAt: string | null;
@@ -12,6 +14,8 @@ export interface WorkoutEntry {
   id: string;
   exerciseId: string;
   date: string; // YYYY-MM-DD
+  sets?: number;
+  restSeconds?: number;
   updatedAt: string;
   deletedAt: string | null;
 }

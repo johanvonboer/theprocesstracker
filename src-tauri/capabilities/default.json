@@ -8,11 +8,17 @@
     "opener:default",
     {
       "identifier": "fs:allow-exists",
-      "allow": [{ "path": "$APPDATA/**" }]
+      "allow": [
+        { "path": "$APPDATA/**" },
+        { "path": "$DATA/theprocesstracker/**" }
+      ]
     },
     {
       "identifier": "fs:allow-read-text-file",
-      "allow": [{ "path": "$APPDATA/**" }]
+      "allow": [
+        { "path": "$APPDATA/**" },
+        { "path": "$DATA/theprocesstracker/**" }
+      ]
     },
     {
       "identifier": "fs:allow-write-text-file",
