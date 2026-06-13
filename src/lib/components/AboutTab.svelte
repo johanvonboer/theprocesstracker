@@ -7,6 +7,7 @@
   let email = $state('');
   let status = $state<'idle' | 'sending' | 'sent' | 'error'>('idle');
   let errorText = $state('');
+  let privacyOpen = $state(false);
 
   async function submitFeedback() {
     if (!message.trim()) return;
@@ -47,7 +48,8 @@
   </div>
 
   <div class="author-note">
-    <p>The Process is exactly what I wanted a workout app to be: simple, private, and completely out of my way. No data collection, no ads. Just the process.</p>
+    <p>Hi I'm Johan, and I built The Process Tracker because I wanted a workout app that is simple, private, and just for tracking my workouts, nothing else. No unwanted data collection, no ads. Just me and the process.</p>
+    <p>Let me know if you have any suggestions or feedback!</p>
     <p class="author-sig">Johan</p>
   </div>
 
@@ -92,6 +94,36 @@
       </button>
     </div>
   {/if}
+
+  <div class="privacy-section">
+    <button class="privacy-toggle" onclick={() => (privacyOpen = !privacyOpen)}>
+      Privacy Policy
+      <span class="privacy-chevron" class:open={privacyOpen}>›</span>
+    </button>
+
+    {#if privacyOpen}
+      <div class="privacy-body">
+        <p><strong>Last updated: May 2026</strong></p>
+
+        <p>The Process Tracker is designed to respect your privacy. This policy explains what little data the app touches and why.</p>
+
+        <h3>Data stored locally</h3>
+        <p>Your exercises, workout log, and settings are stored only on your device. We never read or upload this data unless you explicitly enable remote sync.</p>
+
+        <h3>Remote sync (optional)</h3>
+        <p>If you choose to activate sync, an anonymous account is created on our server (<code>api.theprocesstracker.com</code>). It consists of a random GUID and a secret key — no name, email, or personal identifier is required or collected. Your workout data is synced to this account so it can be shared across your devices. You can unlink and delete your account at any time from the Settings tab.</p>
+
+        <h3>Feedback form (optional)</h3>
+        <p>The feedback form lets you send us a message. You may optionally include your email address if you'd like a reply. Submitted messages and any email address you provide are used solely to respond to your feedback and are not shared with third parties.</p>
+
+        <h3>No tracking, no ads</h3>
+        <p>We do not use analytics, advertising SDKs, or any form of behavioural tracking.</p>
+
+        <h3>Contact</h3>
+        <p>Questions about this policy? Use the feedback form above.</p>
+      </div>
+    {/if}
+  </div>
 </section>
 
 <style>
@@ -219,4 +251,63 @@
   }
 
   .btn-link:hover { opacity: 0.75; background: none; }
+
+  .privacy-section {
+    margin-top: 2rem;
+    border-top: 1px solid rgba(128, 128, 128, 0.15);
+    padding-top: 1rem;
+  }
+
+  .privacy-toggle {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: inherit;
+    opacity: 0.45;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .privacy-toggle:hover { opacity: 0.75; background: none; }
+
+  .privacy-chevron {
+    display: inline-block;
+    font-size: 1rem;
+    line-height: 1;
+    transition: transform 0.2s ease;
+    transform: rotate(0deg);
+  }
+
+  .privacy-chevron.open { transform: rotate(90deg); }
+
+  .privacy-body {
+    margin-top: 1rem;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    opacity: 0.7;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .privacy-body p { margin: 0; }
+
+  .privacy-body h3 {
+    font-size: 0.82rem;
+    font-weight: 700;
+    margin: 0.75rem 0 0;
+    opacity: 1;
+  }
+
+  .privacy-body code {
+    font-family: monospace;
+    font-size: 0.8rem;
+    background: rgba(128, 128, 128, 0.12);
+    border-radius: 4px;
+    padding: 0.1em 0.3em;
+  }
 </style>

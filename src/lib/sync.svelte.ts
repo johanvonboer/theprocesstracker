@@ -246,4 +246,22 @@ export class SyncManager {
     if (this._debounceTimer) { clearTimeout(this._debounceTimer); this._debounceTimer = null; }
     this._stopPeriodicSync();
   }
+
+  async deleteAccount(): Promise<void> {
+    if (!this.syncConfig) throw new Error('No account to delete.');
+    const { serverUrl, guid, secret } = this.syncConfig;
+    let res: Response;
+    try {
+      res = await fetch(`${serverUrl}/api/v1/account`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${guid}.${secret}` },
+      });
+    } catch {
+      throw new Error("Couldn't connect to the server.");
+    }
+    if (res.status === 401 || res.status === 403) throw new Error('Credentials rejected — account may already be deleted.');
+    if (res.status >= 500) throw new Error('The server ran into a problem — try again later.');
+    if (!res.ok) throw new Error('Delete failed — try again later.');
+    await this.unlinkAccount();
+  }
 }

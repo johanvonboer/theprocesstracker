@@ -6,7 +6,6 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "barcode-scanner:default",
     {
       "identifier": "fs:allow-exists",
       "allow": [{ "path": "$APPDATA/**" }]

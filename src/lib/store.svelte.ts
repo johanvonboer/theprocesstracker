@@ -130,6 +130,7 @@ class WorkoutStore {
   createAccount(serverUrl: string) { return this.sync.createAccount(serverUrl); }
   linkAccount(serverUrl: string, guid: string, secret: string) { return this.sync.linkAccount(serverUrl, guid, secret); }
   unlinkAccount() { return this.sync.unlinkAccount(); }
+  deleteAccount() { return this.sync.deleteAccount(); }
 
   // Data operations
   addExercise(name: string) {

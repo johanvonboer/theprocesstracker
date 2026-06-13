@@ -16,6 +16,8 @@
   let linkSecret = $state('');
   let syncBusy = $state(false);
   let unlinkPending = $state(false);
+  let deletePending = $state(false);
+  let deleteBusy = $state(false);
   let showSecret = $state(false);
   let showManualInput = $state(false);
 
@@ -144,6 +146,20 @@
     }
   }
 
+  async function confirmDelete() {
+    deleteBusy = true;
+    try {
+      await store.deleteAccount();
+      deletePending = false;
+      closeQr();
+      showToast('Account deleted', { type: 'info' });
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Failed to delete account');
+    } finally {
+      deleteBusy = false;
+    }
+  }
+
 </script>
 
 <section class="settings">
@@ -240,14 +256,24 @@
     </div>
     <div class="sync-actions">
       <button class="btn-outline" onclick={openQr}>Link another device</button>
-{#if unlinkPending}
+      {#if unlinkPending}
         <div class="sync-unlink-confirm">
           <span>Unlink?</span>
           <button class="btn-icon btn-danger" onclick={() => { store.unlinkAccount(); unlinkPending = false; closeQr(); }} title="Confirm">✓</button>
           <button class="btn-icon btn-ghost" onclick={() => (unlinkPending = false)} title="Cancel">✗</button>
         </div>
       {:else}
-        <button class="btn-outline" onclick={() => (unlinkPending = true)}>Unlink account</button>
+        <button class="btn-outline" onclick={() => { unlinkPending = true; deletePending = false; }}>Unlink account</button>
+      {/if}
+      {#if deletePending}
+        <div class="sync-unlink-confirm">
+          <span class="delete-confirm-label">Delete server account?</span>
+          <span class="delete-confirm-note">Your local data won't be affected.</span>
+          <button class="btn-icon btn-danger" onclick={confirmDelete} disabled={deleteBusy} title="Confirm">✓</button>
+          <button class="btn-icon btn-ghost" onclick={() => (deletePending = false)} disabled={deleteBusy} title="Cancel">✗</button>
+        </div>
+      {:else}
+        <button class="btn-outline" onclick={() => { deletePending = true; unlinkPending = false; }}>Delete account</button>
       {/if}
     </div>
 
@@ -560,6 +586,13 @@
   }
 
   .manual-input-expanded { padding-top: 0.75rem; }
+
+  .delete-confirm-label { font-weight: 500; font-size: 0.875rem; }
+
+  .delete-confirm-note {
+    font-size: 0.78rem;
+    opacity: 0.55;
+  }
 
 .qr-overlay {
     position: fixed;

@@ -1,6 +1,6 @@
 {
   "name": "theprocesstracker",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "",
   "type": "module",
   "scripts": {
@@ -11,9 +11,9 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri",
-    "build:android": "tauri android build",
+    "build:android": "tauri android build && bash scripts/build-android-symbols.sh",
     "dev:android": "tauri android dev",
-    "build:linux": "tauri build --target x86_64-unknown-linux-gnu",
+    "build:linux": "APPIMAGE_EXTRACT_AND_RUN=1 tauri build --target x86_64-unknown-linux-gnu",
     "install:linux": "sudo dpkg -i \"src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/The Process - Workout Tracker_${npm_package_version}_amd64.deb\"",
     "uninstall:linux": "sudo dpkg -r theprocesstracker"
   },
