@@ -19,3 +19,9 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# tao calls activity.getId() via JNI in onActivityCreate, but proguard-wry.pro
+# doesn't list it, so R8 strips the Kotlin property getter in release builds.
+-keep class com.theprocesstracker.WryActivity {
+  int getId();
+}

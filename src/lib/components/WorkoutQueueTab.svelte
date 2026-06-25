@@ -1,7 +1,22 @@
 <script lang="ts">
   import { store } from '$lib/store.svelte';
-  import { flip } from 'svelte/animate';
+  import type { AnimationConfig } from 'svelte/animate';
   import { expoInOut } from 'svelte/easing';
+
+  function translateFlip(
+    _node: Element,
+    { from, to }: { from: DOMRect; to: DOMRect },
+    params?: { duration?: number; easing?: (t: number) => number }
+  ): AnimationConfig {
+    const dx = from.left - to.left;
+    const dy = from.top - to.top;
+    const { duration = 650, easing = expoInOut } = params ?? {};
+    return {
+      duration,
+      easing,
+      css: (_t, u) => `transform: translate(${u * dx}px, ${u * dy}px)`,
+    };
+  }
   import { fmtDate, daysSince, urgencyColor, today } from '$lib/utils';
 
   const UNDO_MS = 5_000;
@@ -106,7 +121,7 @@
       <li
         class="priority-card"
         style="border-left-color: {urgencyColor(lastDate, exercise.colorOverride?.yellowAfterDays ?? store.settings.yellowAfterDays, exercise.colorOverride?.redAfterDays ?? store.settings.redAfterDays)}"
-        animate:flip={{ duration: 650, easing: expoInOut }}
+        animate:translateFlip={{ duration: 650, easing: expoInOut }}
       >
         <div class="priority-rank">{i + 1}</div>
         <div class="priority-info">
@@ -272,7 +287,8 @@
     border: 1px solid rgba(128, 128, 128, 0.4);
     color: inherit;
     font-size: 0.85rem;
-    padding: 0.4rem 0.75rem;
+    line-height: 1;
+    padding: 0.5rem 0.75rem;
     min-width: 4.5rem;
   }
 
