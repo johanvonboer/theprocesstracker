@@ -128,10 +128,13 @@ store.settings           Settings
 store.syncConfig         SyncConfig | null   (delegated from SyncManager)
 store.syncStatus         'idle'|'syncing'|'error'  (delegated)
 store.ready              boolean
+store.activeTimers       Record<exerciseId, { phase: 'exercise'|'rest'; startedAt }>
+                         (ephemeral — never persisted or synced)
 
 // Computed
 store.activeExercises    Exercise[]  (non-deleted)
-store.priorityCue        { exercise, lastDate }[]  (sorted by oldest first)
+store.priorityCue        { exercise, lastDate }[]  (oldest first; an exercise
+                         with a running timer is pinned to the top)
 store.entriesFor(id)     WorkoutEntry[]  (non-deleted, sorted newest first)
 
 // Data mutations (each triggers save + debounced sync)
@@ -143,6 +146,10 @@ store.logEntry(exerciseId, date)
 store.removeEntry(id)
 store.updateEntry(id, date)
 store.updateSettings(patch)
+
+// Workout session timer (ephemeral, no save/sync)
+store.startPhase(exerciseId, 'exercise' | 'rest')
+store.clearTimer(exerciseId)
 
 // Sync
 store.manualSync()
@@ -212,3 +219,5 @@ When bumping the version, update it in all three of these files:
 - `package.json` — `"version"` field
 - `src-tauri/tauri.conf.json` — `"version"` field
 - `src-tauri/Cargo.toml` — `version` field under `[package]`
+- `src-tauri/Cargo.lock` — `version` under the `theprocesstracker` package
+- `package-lock.json` — both `version` fields (`npm install --package-lock-only`)

@@ -22,12 +22,11 @@
   let showManualInput = $state(false);
 
   const isAndroid = navigator.userAgent.includes('Android');
-  let hasCamera = $state<boolean | null>(null);
-
-  $effect(() => {
-    if (isAndroid) { hasCamera = true; return; }
-    QrScanner.hasCamera().then(v => { hasCamera = v; });
-  });
+  // Capability check only. Don't call QrScanner.hasCamera() here — it runs
+  // enumerateDevices(), which WebKit gates behind the camera permission prompt,
+  // so probing on mount asks for the camera just for opening this tab. The real
+  // permission request belongs in scanAndLink()/qrScanner.start().
+  const hasCamera = isAndroid || !!navigator.mediaDevices?.getUserMedia;
 
   // Webcam scanner state
   let showScanOverlay = $state(false);

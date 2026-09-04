@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store } from '$lib/store.svelte';
+  import type { Exercise } from '$lib/types';
   import type { AnimationConfig } from 'svelte/animate';
   import { expoInOut } from 'svelte/easing';
 
@@ -35,30 +36,56 @@
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
 
-  function getRestDisplay(exerciseId: string): string | null {
-    const startedAt = store.restTimers[exerciseId];
-    if (!startedAt) return null;
-    return formatTime(Math.floor((now - startedAt) / 1000));
+  function elapsedSeconds(startedAt: number): number {
+    return Math.floor((Date.now() - startedAt) / 1000);
+  }
+
+  function getTimerDisplay(exerciseId: string): string | null {
+    const timer = store.activeTimers[exerciseId];
+    if (!timer) return null;
+    // `now` ticks every second — read it so this stays reactive.
+    return formatTime(Math.max(0, Math.floor((now - timer.startedAt) / 1000)));
+  }
+
+  /** "Set 2/3 · 8r" — the set in progress, with the exercise's targets if set. */
+  function setLabel(exercise: Exercise, currentSet: number): string {
+    const target = exercise.targetSets ? `/${exercise.targetSets}` : '';
+    const reps = exercise.targetReps ? ` · ${exercise.targetReps}r` : '';
+    return `Set ${currentSet}${target}${reps}`;
+  }
+
+  /** "3 × 8" — targets shown on the idle button, before any set is underway. */
+  function targetHint(exercise: Exercise): string | null {
+    if (exercise.targetSets && exercise.targetReps) return `${exercise.targetSets} × ${exercise.targetReps}`;
+    if (exercise.targetSets) return `${exercise.targetSets} sets`;
+    if (exercise.targetReps) return `${exercise.targetReps} reps`;
+    return null;
   }
 
   let localSets = $state<Record<string, number>>({});
+  // Rest accumulates across every rest period of the session, so the logged
+  // entry records total rest rather than only the last stretch.
+  let restTotals = $state<Record<string, number>>({});
 
-  function handleAddSet(exerciseId: string) {
-    localSets[exerciseId] = (localSets[exerciseId] ?? 0) + 1;
-    store.startRest(exerciseId);
-  }
-
-  function handleStopRest(exerciseId: string) {
-    store.stopRest(exerciseId);
-  }
-
-  function addLocalSet(exerciseId: string) {
-    localSets[exerciseId] = (localSets[exerciseId] ?? 0) + 1;
-  }
-
-  function removeLocalSet(exerciseId: string) {
-    const n = localSets[exerciseId] ?? 0;
-    if (n > 0) localSets[exerciseId] = n - 1;
+  /**
+   * One button cycles the whole set: idle → exercise → rest → exercise → …
+   * A set is counted when an exercise period ends, and rest time is banked when
+   * a rest period ends. "Done" (handleLogDate) closes out whichever phase is
+   * still open and clears the timer.
+   */
+  function handleTimerClick(exerciseId: string) {
+    const timer = store.activeTimers[exerciseId];
+    if (!timer) {
+      store.startPhase(exerciseId, 'exercise');
+      return;
+    }
+    if (timer.phase === 'exercise') {
+      localSets[exerciseId] = (localSets[exerciseId] ?? 0) + 1;
+      store.startPhase(exerciseId, 'rest');
+    } else {
+      restTotals[exerciseId] = (restTotals[exerciseId] ?? 0) + elapsedSeconds(timer.startedAt);
+      store.startPhase(exerciseId, 'exercise');
+    }
   }
 
   let openDropdownId = $state<string | null>(null);
@@ -78,13 +105,21 @@
 
   function handleLogDate(exerciseId: string, date: string) {
     const isToday = date === today();
-    const sets = isToday && localSets[exerciseId] ? localSets[exerciseId] : undefined;
-    const restSeconds = isToday && store.restTimers[exerciseId]
-      ? Math.floor((Date.now() - store.restTimers[exerciseId]) / 1000)
-      : undefined;
-    store.logEntry(exerciseId, date, sets, restSeconds);
-    store.stopRest(exerciseId);
-    if (isToday) delete localSets[exerciseId];
+    const timer = store.activeTimers[exerciseId];
+
+    // Close out the phase still running: an unfinished exercise period is a set
+    // the user actually performed, an unfinished rest period is rest to bank.
+    let sets = localSets[exerciseId] ?? 0;
+    let rest = restTotals[exerciseId] ?? 0;
+    if (timer?.phase === 'exercise') sets += 1;
+    else if (timer?.phase === 'rest') rest += elapsedSeconds(timer.startedAt);
+
+    store.logEntry(exerciseId, date, isToday && sets ? sets : undefined, isToday && rest ? rest : undefined);
+    store.clearTimer(exerciseId);
+    if (isToday) {
+      delete localSets[exerciseId];
+      delete restTotals[exerciseId];
+    }
 
     const entry = store.entries.find(e => e.exerciseId === exerciseId && e.date === date && !e.deletedAt);
     if (!entry) return;
@@ -96,12 +131,24 @@
     };
   }
 
+  /**
+   * Throw away an in-progress session: the running timer, the sets counted so
+   * far and the banked rest. For starting an exercise by mistake — nothing is
+   * logged, so there is nothing to undo afterwards.
+   */
+  function handleCancelSession(exerciseId: string) {
+    store.clearTimer(exerciseId);
+    delete localSets[exerciseId];
+    delete restTotals[exerciseId];
+  }
+
   function handleUndoLog(exerciseId: string) {
     const pending = undoPending[exerciseId];
     if (!pending) return;
     clearTimeout(pending.timeoutId);
     const entry = store.entries.find(e => e.id === pending.entryId);
     if (entry?.sets) localSets[exerciseId] = entry.sets;
+    if (entry?.restSeconds) restTotals[exerciseId] = entry.restSeconds;
     store.removeEntry(pending.entryId);
     delete undoPending[exerciseId];
   }
@@ -114,57 +161,58 @@
   <ol class="priority-list">
     {#each store.priorityCue as { exercise, lastDate }, i (exercise.id)}
       {@const setsToday = localSets[exercise.id] ?? 0}
-      {@const restDisplay = getRestDisplay(exercise.id)}
-      {@const restRunning = store.restTimers[exercise.id] !== undefined}
-      {@const loggedToday = store.entries.some(e => e.exerciseId === exercise.id && e.date === today() && !e.deletedAt)}
-      {@const showSetsRow = !loggedToday && (setsToday > 0 || restRunning || !!exercise.targetSets || !!exercise.targetReps)}
+      {@const timer = store.activeTimers[exercise.id]}
+      {@const timerDisplay = getTimerDisplay(exercise.id)}
+      {@const currentSet = setsToday + (timer?.phase === 'exercise' ? 1 : 0)}
       <li
         class="priority-card"
+        class:active={!!timer}
         style="border-left-color: {urgencyColor(lastDate, exercise.colorOverride?.yellowAfterDays ?? store.settings.yellowAfterDays, exercise.colorOverride?.redAfterDays ?? store.settings.redAfterDays)}"
         animate:translateFlip={{ duration: 650, easing: expoInOut }}
       >
-        <div class="priority-rank">{i + 1}</div>
-        <div class="priority-info">
-          <span class="priority-name">{exercise.name}</span>
-          <span class="priority-last">
-            {#if lastDate}
-              Last done {daysSince(lastDate)} &middot; {fmtDate(lastDate)}
-            {:else}
-              Never done
-            {/if}
-          </span>
-          {#if showSetsRow}
-            <span class="sets-row">
-              <span class="sets-stepper">
-                <button class="sets-adj" onclick={() => addLocalSet(exercise.id)}>+</button>
-                <span class="sets-adj-divider"></span>
-                <button class="sets-adj" onclick={() => removeLocalSet(exercise.id)} disabled={setsToday === 0}>−</button>
-                <span class="sets-count">Sets: {setsToday}{exercise.targetSets ? `/${exercise.targetSets}` : ''}{exercise.targetReps ? ` · ${exercise.targetReps}r` : ''}</span>
-              </span>
-              {#if restDisplay}
-                <span class="rest-badge">Rest: {restDisplay}</span>
+        <div class="card-body">
+          <div class="priority-rank">{i + 1}</div>
+          <div class="priority-info">
+            <span class="priority-name">{exercise.name}</span>
+            <span class="priority-last">
+              {#if lastDate}
+                Last done {daysSince(lastDate)} &middot; {fmtDate(lastDate)}
+              {:else}
+                Never done
               {/if}
             </span>
-          {/if}
+          </div>
         </div>
         <div class="card-actions">
-          {#if restRunning}
-            <button class="btn-stop" onclick={() => handleStopRest(exercise.id)}>Stop</button>
-          {:else}
-            <button class="btn-set" onclick={() => handleAddSet(exercise.id)}>+ Set</button>
-          {/if}
+          <button class="btn-set" onclick={() => handleTimerClick(exercise.id)}>
+            {#if timer}
+              <span class="timer-set">{setLabel(exercise, currentSet)}</span>
+              <span class="timer-elapsed">{timer.phase === 'exercise' ? 'Exercise' : 'Rest'} {timerDisplay}</span>
+              <span class="timer-action">{timer.phase === 'exercise' ? 'Stop and rest' : 'Stop and exercise'}</span>
+            {:else}
+              {#if targetHint(exercise)}
+                <span class="timer-set">{targetHint(exercise)}</span>
+              {/if}
+              <span class="timer-action idle">Start exercise</span>
+            {/if}
+          </button>
           <div class="log-slot">
             {#if undoPending[exercise.id] !== undefined}
               <button class="btn-undo" style="--undo-ms: {UNDO_MS}ms" onclick={() => handleUndoLog(exercise.id)}>Undo</button>
             {/if}
             <div class="split-log" class:invisible={undoPending[exercise.id] !== undefined}>
-              <button class="btn-log-main" onclick={() => handleLogDate(exercise.id, today())}>Log today</button>
+              <button class="btn-log-main" onclick={() => handleLogDate(exercise.id, today())}>Done</button>
               <button class="btn-log-arrow" onclick={(e) => { e.stopPropagation(); openDropdownId = openDropdownId === exercise.id ? null : exercise.id; }}>&#9662;</button>
               {#if openDropdownId === exercise.id}
                 <div class="log-dropdown">
-                  <button onclick={() => { handleLogDate(exercise.id, daysAgo(1)); openDropdownId = null; }}>Log yesterday</button>
-                  <button onclick={() => { handleLogDate(exercise.id, daysAgo(2)); openDropdownId = null; }}>Log 2 days ago</button>
-                  <button onclick={() => { handleLogDate(exercise.id, daysAgo(3)); openDropdownId = null; }}>Log 3 days ago</button>
+                  <button onclick={() => { handleLogDate(exercise.id, daysAgo(1)); openDropdownId = null; }}>Done yesterday</button>
+                  <button onclick={() => { handleLogDate(exercise.id, daysAgo(2)); openDropdownId = null; }}>Done 2 days ago</button>
+                  <button onclick={() => { handleLogDate(exercise.id, daysAgo(3)); openDropdownId = null; }}>Done 3 days ago</button>
+                  {#if timer}
+                    <button class="cancel-item" onclick={() => { handleCancelSession(exercise.id); openDropdownId = null; }}>
+                      Cancel — discard this session
+                    </button>
+                  {/if}
                 </div>
               {/if}
             </div>
@@ -188,28 +236,46 @@
     margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.6rem;
+    gap: 0.7rem;
   }
 
+  /* Card is a row of full-height segments: body | rest | done | caret.
+     No overflow:hidden here — the log dropdown escapes the card — so the
+     trailing segments round their own outer corners instead. */
   .priority-card {
     position: relative;
     display: flex;
-    align-items: center;
-    gap: 1rem;
+    align-items: stretch;
     background: var(--card-bg);
-    border-left: 4px solid transparent;
-    border-radius: 10px;
-    padding: 0.75rem 1rem;
+    border-left: 5px solid transparent;
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(44, 57, 71, 0.1), 0 6px 16px rgba(44, 57, 71, 0.07);
+    padding: 0;
+    transition: margin-bottom 200ms ease, box-shadow 200ms ease;
+  }
+
+  /* The exercise currently underway: pinned to the top by priorityCue, lifted
+     slightly, and pushed away from the cards below. */
+  .priority-card.active {
+    margin-bottom: 0.7rem;
+    box-shadow: 0 1px 2px rgba(44, 57, 71, 0.12), 0 8px 22px rgba(44, 57, 71, 0.12);
+  }
+
+  .card-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    min-width: 0;
+    padding: 0.85rem 1rem;
   }
 
   .priority-rank {
-    font-size: 1rem;
+    font-size: 1.05rem;
     font-weight: 700;
-    opacity: 0.35;
-    min-width: 1.5rem;
+    opacity: 0.3;
+    min-width: 1.25rem;
     text-align: right;
-    align-self: flex-start;
-    padding-top: 0.15rem;
   }
 
   .priority-info {
@@ -220,93 +286,65 @@
     min-width: 0;
   }
 
-  .priority-name { font-weight: 600; font-size: 0.95rem; }
-  .priority-last { font-size: 0.8rem; opacity: 0.55; }
+  .priority-name { font-weight: 700; font-size: 1rem; }
+  .priority-last { font-size: 0.8rem; opacity: 0.5; }
 
-  .sets-row {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    margin-top: 0.35rem;
-  }
-
-  .sets-stepper {
+  .card-actions {
     display: flex;
     align-items: stretch;
-    border: 1px solid rgba(128, 128, 128, 0.35);
-    border-radius: 6px;
-    overflow: hidden;
+    flex-shrink: 0;
   }
 
-  .sets-adj {
+  .btn-set {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.2rem;
     border: none;
+    border-left: 1px solid var(--card-border);
     border-radius: 0;
     background: none;
     color: inherit;
     font-size: 0.85rem;
     line-height: 1;
-    padding: 0.2rem 0.4rem;
+    padding: 0 0.9rem;
+    min-width: 9rem;
   }
 
-  .sets-adj:hover { background: rgba(128, 128, 128, 0.12); }
-  .sets-adj:disabled { opacity: 0.2; cursor: default; background: none; }
+  .btn-set:hover { background: rgba(128, 128, 128, 0.1); }
 
-  .sets-adj-divider {
-    width: 1px;
-    background: rgba(128, 128, 128, 0.25);
-    align-self: stretch;
-  }
-
-  .sets-count {
-    border-left: 1px solid rgba(128, 128, 128, 0.25);
-    padding: 0.2rem 0.5rem;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--accent);
-    background: rgba(84, 122, 149, 0.1);
-    display: flex;
-    align-items: center;
+  .timer-set {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    opacity: 0.7;
     white-space: nowrap;
   }
 
-  .rest-badge {
-    background: rgba(194, 165, 109, 0.18);
-    color: var(--color-accent1);
+  .timer-elapsed {
+    font-size: 0.95rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
 
-  .card-actions {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    flex-shrink: 0;
+  .timer-action {
+    font-size: 0.72rem;
+    opacity: 0.75;
+    white-space: nowrap;
   }
 
-  .btn-set {
-    background: none;
-    border: 1px solid rgba(128, 128, 128, 0.4);
-    color: inherit;
+  /* Nothing running: the label is the button, so give it full weight. */
+  .timer-action.idle {
     font-size: 0.85rem;
-    line-height: 1;
-    padding: 0.5rem 0.75rem;
-    min-width: 4.5rem;
+    opacity: 1;
   }
-
-  .btn-set:hover { background: rgba(128, 128, 128, 0.1); border-color: rgba(128, 128, 128, 0.6); }
-
-  .btn-stop {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.35);
-    color: #ef4444;
-    font-size: 0.85rem;
-    padding: 0.4rem 0.75rem;
-    min-width: 4.5rem;
-  }
-
-  .btn-stop:hover { background: rgba(239, 68, 68, 0.2); }
 
   .log-slot {
     position: relative;
+    display: flex;
+    align-items: stretch;
   }
 
   .log-slot .btn-undo {
@@ -317,6 +355,7 @@
   .split-log {
     position: relative;
     display: flex;
+    align-items: stretch;
   }
 
   .split-log.invisible {
@@ -325,17 +364,33 @@
   }
 
   .btn-log-main {
-    border-radius: 8px 0 0 8px;
-    border-right: none;
-    padding-right: 0.6rem;
+    border: none;
+    border-radius: 0;
+    padding: 0 1.15rem;
+    font-size: 0.9rem;
+    min-width: 5.5rem;
   }
 
   .btn-log-arrow {
-    border-radius: 0 8px 8px 0;
-    border-left: 1px solid rgba(128, 128, 128, 0.25);
-    padding: 0.4rem 0.55rem;
-    font-size: 0.75rem;
+    position: relative;
+    border: none;
+    border-radius: 0 12px 12px 0;
+    padding: 0 0.7rem;
+    font-size: 0.7rem;
     line-height: 1;
+  }
+
+  /* Divider drawn in the button's own text color so it reads on the navy
+     (light theme) and on the gold (dark theme) alike. */
+  .btn-log-arrow::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: currentColor;
+    opacity: 0.35;
   }
 
   .log-dropdown {
@@ -364,9 +419,24 @@
 
   .log-dropdown button:hover { background: var(--interactive-hover); }
 
+  .log-dropdown .cancel-item {
+    border-top: 1px solid rgba(128, 128, 128, 0.3);
+    color: #ef4444;
+  }
+
+  /* Dropdown items sit on --interactive, which is gold in dark theme — bright
+     red would barely read against it. */
+  @media (prefers-color-scheme: dark) {
+    :global(html:not([data-theme='light'])) .log-dropdown .cancel-item { color: #7f1d1d; }
+  }
+
+  :global(html[data-theme='dark']) .log-dropdown .cancel-item { color: #7f1d1d; }
+
   .btn-undo {
     position: relative;
     overflow: hidden;
+    border: none;
+    border-radius: 0 12px 12px 0;
     background: var(--color-accent1);
     color: #1a1a1a;
     min-width: 5.5rem;
@@ -388,5 +458,15 @@
   @keyframes btn-countdown {
     from { width: 100%; }
     to   { width: 0%; }
+  }
+
+  @media (max-width: 480px) {
+    .card-body { padding: 0.7rem 0.75rem; gap: 0.6rem; }
+    .btn-set { min-width: 0; padding: 0 0.6rem; font-size: 0.8rem; }
+    .timer-elapsed { font-size: 0.85rem; }
+    .timer-set { font-size: 0.62rem; }
+    .timer-action { font-size: 0.65rem; }
+    .timer-action.idle { font-size: 0.8rem; }
+    .btn-log-main { min-width: 0; padding: 0 0.85rem; font-size: 0.85rem; }
   }
 </style>

@@ -109,8 +109,10 @@ async function readData(): Promise<{ exercises: Exercise[]; entries: WorkoutEntr
 class WorkoutStore {
   exercises = $state<Exercise[]>([]);
   entries = $state<WorkoutEntry[]>([]);
-  // restTimers: exerciseId → timestamp when rest started (ephemeral, not persisted)
-  restTimers = $state<Record<string, number>>({});
+  // activeTimers: exerciseId → the phase currently being timed and when it began.
+  // The workout queue alternates exercise ↔ rest on each button press until the
+  // set is logged. Ephemeral — never persisted or synced.
+  activeTimers = $state<Record<string, { phase: 'exercise' | 'rest'; startedAt: number }>>({});
   settings = $state<Settings>({ ...DEFAULT_SETTINGS });
   ready = $state(false);
 
@@ -155,6 +157,12 @@ class WorkoutStore {
         return { exercise, lastDate: dates[0] ?? null };
       })
       .sort((a, b) => {
+        // An exercise with a running timer is pinned to the top for as long as
+        // the session lasts; if several are running, most recently started wins.
+        const ta = this.activeTimers[a.exercise.id]?.startedAt ?? 0;
+        const tb = this.activeTimers[b.exercise.id]?.startedAt ?? 0;
+        if (ta !== tb) return tb - ta;
+
         const ya = a.exercise.colorOverride?.yellowAfterDays ?? this.settings.yellowAfterDays;
         const ra = a.exercise.colorOverride?.redAfterDays   ?? this.settings.redAfterDays;
         const yb = b.exercise.colorOverride?.yellowAfterDays ?? this.settings.yellowAfterDays;
@@ -239,12 +247,12 @@ class WorkoutStore {
     if (!duplicate) { entry.date = date; entry.updatedAt = now(); this.save(); }
   }
 
-  startRest(exerciseId: string) {
-    this.restTimers[exerciseId] = Date.now();
+  startPhase(exerciseId: string, phase: 'exercise' | 'rest') {
+    this.activeTimers[exerciseId] = { phase, startedAt: Date.now() };
   }
 
-  stopRest(exerciseId: string) {
-    delete this.restTimers[exerciseId];
+  clearTimer(exerciseId: string) {
+    delete this.activeTimers[exerciseId];
   }
 
   updateExerciseTargets(id: string, targetSets: number | undefined, targetReps: number | undefined) {
