@@ -184,7 +184,12 @@
           </div>
         </div>
         <div class="card-actions">
-          <button class="btn-set" onclick={() => handleTimerClick(exercise.id)}>
+          <button
+            class="btn-set"
+            class:phase-exercise={timer?.phase === 'exercise'}
+            class:phase-rest={timer?.phase === 'rest'}
+            onclick={() => handleTimerClick(exercise.id)}
+          >
             {#if timer}
               <span class="timer-set">{setLabel(exercise, currentSet)}</span>
               <span class="timer-elapsed">{timer.phase === 'exercise' ? 'Exercise' : 'Rest'} {timerDisplay}</span>
@@ -313,6 +318,20 @@
   }
 
   .btn-set:hover { background: rgba(128, 128, 128, 0.1); }
+
+  .btn-set.phase-exercise {
+    background: #059669;
+    color: #fff;
+    border-left-color: transparent;
+  }
+  .btn-set.phase-exercise:hover { background: #047857; }
+
+  .btn-set.phase-rest {
+    background: #2563eb;
+    color: #fff;
+    border-left-color: transparent;
+  }
+  .btn-set.phase-rest:hover { background: #1d4ed8; }
 
   .timer-set {
     font-size: 0.7rem;
