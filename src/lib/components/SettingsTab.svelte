@@ -102,12 +102,12 @@
 
   async function openQr() {
     const { guid, secret, serverUrl } = store.syncConfig!;
-    const playStoreUrl = 'https://play.google.com/store/apps/details?id=com.theprocesstracker.app';
+    const playStoreUrl = 'https://play.google.com/store/apps/details?id=com.theprocesstracker';
     const intentUrl =
       `intent://link?guid=${encodeURIComponent(guid)}` +
       `&secret=${encodeURIComponent(secret)}` +
       `&server=${encodeURIComponent(serverUrl)}` +
-      `#Intent;scheme=theprocesstracker;package=com.theprocesstracker.app` +
+      `#Intent;scheme=theprocesstracker;package=com.theprocesstracker` +
       `;S.browser_fallback_url=${encodeURIComponent(playStoreUrl)};end`;
     qrDataUrl = await QRCode.toDataURL(intentUrl, {
       width: 300,
