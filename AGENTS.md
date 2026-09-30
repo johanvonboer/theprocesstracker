@@ -34,7 +34,9 @@ src/
     utils.ts                 Pure date/color helpers (today, fmtDate, etc.)
     store.svelte.ts          WorkoutStore — data operations & persistence
     sync.svelte.ts           SyncManager — cloud sync, retry, account mgmt
+    share.ts                 Schema share/import API client (pure, no store dep)
     components/
+      SchemaBar.svelte       Schema selector + share/import overlays
       ExercisesTab.svelte    "Setup exercises" tab
       WorkoutQueueTab.svelte "Workout queue" tab
       SettingsTab.svelte     "Settings" tab (appearance + sync)
@@ -58,12 +60,14 @@ src-tauri/
 +page.svelte          (shell: tabs, toasts, global CSS)
     │
     ├── ExercisesTab.svelte     (local UI state + store calls)
+    │     └── SchemaBar.svelte  (schema selector, share QR, import scan)
     ├── WorkoutQueueTab.svelte  (local UI state + store calls)
     └── SettingsTab.svelte      (local UI state + store calls)
 
 store.svelte.ts       (WorkoutStore: reactive data + file I/O)
     └── sync.svelte.ts          (SyncManager: HTTP sync, retry/backoff)
 
+lib/share.ts          (share endpoint client — no store dependency)
 lib/utils.ts          (pure functions — no store dependency)
 lib/types.ts          (interfaces only — no logic)
 lib/toasts.svelte.ts  (tiny global state for toast messages)
@@ -78,11 +82,37 @@ lib/toasts.svelte.ts  (tiny global state for toast messages)
 Defined in `src/lib/types.ts`.
 
 ```
-Exercise        id, name, description?, updatedAt, deletedAt
-WorkoutEntry    id, exerciseId, date (YYYY-MM-DD), updatedAt, deletedAt
-Settings        yellowAfterDays, redAfterDays, theme, updatedAt
+WorkoutSchema   id, name, importedAt?, updatedAt, deletedAt
+Exercise        id, name, schemaId?, description?, colorOverride?, targetSets?,
+                targetReps?, disabled?, updatedAt, deletedAt
+WorkoutEntry    id, exerciseId, date (YYYY-MM-DD), sets?, restSeconds?,
+                updatedAt, deletedAt
+Settings        yellowAfterDays, redAfterDays, theme, activeSchemaId, updatedAt
 SyncConfig      serverUrl, guid, secret, lastSyncedAt
 ```
+
+### Schemas
+
+A **workout schema** is a named set of exercises. Exactly one is active at a
+time (`settings.activeSchemaId`), and `activeExercises` — which every tab reads
+through — is scoped to it, so the Exercises tab and the workout queue both
+follow the selection automatically.
+
+`Exercise.schemaId` is **optional**. Exercises created before schemas existed —
+or synced down from an older client — have no `schemaId` and are adopted by the
+*primary* schema (`store.primarySchemaId`). Two consequences worth knowing:
+
+- The migration creates the starter schema under the **fixed** id
+  `default-schema`, not a UUID. Every device migrates independently, so a
+  constant id makes them converge on one schema record instead of each
+  inventing its own "My workout".
+- The migration does **not** rewrite exercise records. The orphan fallback
+  already puts them in the right place, so migrating costs no `updatedAt` churn
+  and old clients keep working against the same data.
+
+Deleting a schema cascades: the schema, its exercises, and their entries are all
+soft-deleted. The last remaining schema cannot be deleted — the app always needs
+one to add exercises into.
 
 All records use **soft delete**: `deletedAt` is set to an ISO timestamp instead of removing the row. This is required for sync correctness — deletions must propagate to other devices.
 
@@ -106,7 +136,11 @@ Written via the Tauri `write_secret_file` Rust command, which sets Unix permissi
 
 The sync system lives entirely in `src/lib/sync.svelte.ts`.
 
-**Protocol**: POST `/api/v1/sync` with a Bearer token (`guid.secret`). The body sends only records with `updatedAt > lastSyncedAt` (delta sync). The server returns its own set of changes since the same timestamp. Conflicts resolve by `updatedAt` — most recently modified record wins.
+**Protocol**: POST `/api/v1/sync` with a Bearer token (`guid.secret`). The body sends only records with `updatedAt > lastSyncedAt` (delta sync), under `changes.exercises`, `changes.entries`, `changes.schemas` and `changes.settings`. The server returns its own set of changes since the same timestamp. Conflicts resolve by `updatedAt` — most recently modified record wins.
+
+`changes.schemas` is a per-record collection just like exercises and entries. A
+server that ignores the key degrades gracefully: schemas still work locally,
+they just don't propagate between devices.
 
 **`SyncManager`** holds `syncConfig` and `syncStatus` as `$state`. It receives a `SyncDataRef` interface from `WorkoutStore` (a reference to `this`), giving it read/write access to the reactive `exercises`, `entries`, `settings` arrays plus a `saveData()` callback.
 
@@ -118,12 +152,39 @@ The sync system lives entirely in `src/lib/sync.svelte.ts`.
 
 ---
 
+## Schema sharing
+
+Users share a schema by uploading a snapshot of it and handing over a short
+code; the recipient scans a QR code (or pastes the code) to import it. The
+client lives in `src/lib/share.ts`; the UI is `SchemaBar.svelte`, which reuses
+the same QR generation and scanning approach as account linking in
+`SettingsTab.svelte` (`qrcode` to render, the Tauri barcode-scanner plugin on
+Android, `qr-scanner` webcam fallback on desktop).
+
+**What travels**: `SharedSchemaPayload` — the schema name plus each exercise's
+name, description, targets and color override. Deliberately **no ids, no
+timestamps and no workout history**. The importing client mints fresh UUIDs for
+the schema and every exercise, so an imported schema can never collide with the
+sender's records during sync, and it starts with an empty history.
+
+**Trust**: share payloads come from a stranger's device. `validateSharedPayload`
+checks the shape field by field and trims/caps every string and number before
+any of it reaches the store. Never feed a payload to `store.importSchema`
+without it.
+
+**Server side**: the two share endpoints do not exist yet, and `changes.schemas`
+needs handling in the sync endpoint. Until then the app degrades gracefully —
+schemas work locally, and pressing Share shows an error instead of a code.
+
+---
+
 ## WorkoutStore public API
 
 ```ts
 // Reactive state (read in templates)
 store.exercises          Exercise[]
 store.entries            WorkoutEntry[]
+store.schemas            WorkoutSchema[]
 store.settings           Settings
 store.syncConfig         SyncConfig | null   (delegated from SyncManager)
 store.syncStatus         'idle'|'syncing'|'error'  (delegated)
@@ -132,10 +193,17 @@ store.activeTimers       Record<exerciseId, { phase: 'exercise'|'rest'; startedA
                          (ephemeral — never persisted or synced)
 
 // Computed
-store.activeExercises    Exercise[]  (non-deleted)
+store.liveSchemas        WorkoutSchema[]  (non-deleted)
+store.schemaList         WorkoutSchema[]  (non-deleted, alphabetical — for pickers)
+store.activeSchema       WorkoutSchema | null
+store.activeSchemaId     string | null    (falls back to primary if stale)
+store.primarySchemaId    string | null    (adopts exercises with no schemaId)
+store.activeExercises    Exercise[]  (non-deleted, in the active schema)
 store.priorityCue        { exercise, lastDate }[]  (oldest first; an exercise
                          with a running timer is pinned to the top)
 store.entriesFor(id)     WorkoutEntry[]  (non-deleted, sorted newest first)
+store.schemaIdOf(ex)     string | null   (applies the orphan fallback)
+store.exercisesInSchema(schemaId)  Exercise[]
 
 // Data mutations (each triggers save + debounced sync)
 store.addExercise(name)
@@ -146,6 +214,15 @@ store.logEntry(exerciseId, date)
 store.removeEntry(id)
 store.updateEntry(id, date)
 store.updateSettings(patch)
+
+// Schema operations
+store.addSchema(name)             → new schema id (becomes active)
+store.renameSchema(id, name)
+store.removeSchema(id)            cascades to exercises + entries; no-op on the last one
+store.setActiveSchema(id)
+store.moveExerciseToSchema(exerciseId, schemaId)   keeps history
+store.schemaPayload(schemaId)     → SharedSchemaPayload  (for sharing)
+store.importSchema(payload)       → { schemaId, count }  (fresh ids, becomes active)
 
 // Workout session timer (ephemeral, no save/sync)
 store.startPhase(exerciseId, 'exercise' | 'rest')

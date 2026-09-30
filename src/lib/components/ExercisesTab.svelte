@@ -2,6 +2,7 @@
   import { store } from '$lib/store.svelte';
   import type { Exercise, WorkoutEntry } from '$lib/types';
   import { PenLine, Trash2, Eye, EyeOff } from 'lucide-svelte';
+  import SchemaBar from './SchemaBar.svelte';
   import { fmtDate, today, urgencyColorFromDays } from '$lib/utils';
 
   // ── Add exercise ──────────────────────────────────────────────
@@ -72,6 +73,9 @@
   // ── Sets & reps collapse ──────────────────────────────────────
   let openSets = $state<Record<string, boolean>>({});
 
+  // ── Move-to-schema collapse ───────────────────────────────────
+  let openSchema = $state<Record<string, boolean>>({});
+
   function toggleColor(id: string) {
     openColor[id] = !openColor[id];
   }
@@ -107,6 +111,8 @@
   }
 </script>
 
+<SchemaBar />
+
 <section class="add-exercise">
   <form onsubmit={(e) => { e.preventDefault(); handleAdd(); }}>
     <input
@@ -119,7 +125,7 @@
 </section>
 
 {#if store.activeExercises.length === 0}
-  <p class="empty">No exercises yet. Add one above to get started.</p>
+  <p class="empty">No exercises in this schema yet. Add one above to get started.</p>
 {:else}
   <ul class="exercise-list">
     {#each [...store.activeExercises].sort((a, b) => a.name.localeCompare(b.name)) as exercise (exercise.id)}
@@ -295,6 +301,33 @@
               />
             </div>
           </div>
+        {/if}
+
+        <!-- Move to another schema (only meaningful with more than one) -->
+        {#if store.liveSchemas.length > 1}
+          <button class="btn-history-toggle" onclick={() => { openSchema[exercise.id] = !openSchema[exercise.id]; }}>
+            Schema
+            <span class="toggle-arrow">{openSchema[exercise.id] ? '▲' : '▼'}</span>
+          </button>
+
+          {#if openSchema[exercise.id]}
+            <div class="history-panel sets-panel">
+              <p class="sets-hint">Moving an exercise keeps its workout history.</p>
+              <div class="sets-row">
+                <label for="schema-{exercise.id}">Belongs to</label>
+                <select
+                  id="schema-{exercise.id}"
+                  class="schema-move-select"
+                  value={store.schemaIdOf(exercise) ?? ''}
+                  onchange={(e) => store.moveExerciseToSchema(exercise.id, (e.target as HTMLSelectElement).value)}
+                >
+                  {#each store.schemaList as schema (schema.id)}
+                    <option value={schema.id}>{schema.name}</option>
+                  {/each}
+                </select>
+              </div>
+            </div>
+          {/if}
         {/if}
 
         <!-- History toggle -->
@@ -517,6 +550,8 @@
     opacity: 0.8;
     min-width: 6rem;
   }
+
+  .schema-move-select { flex: 1; font-size: 0.85rem; padding: 0.3rem 0.5rem; }
 
   .sets-row input[type='number'] {
     width: 4.5rem;

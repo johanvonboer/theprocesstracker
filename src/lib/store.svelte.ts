@@ -1,4 +1,4 @@
-import type { Exercise, WorkoutEntry, Settings, SyncConfig } from './types';
+import type { Exercise, WorkoutEntry, Settings, SyncConfig, WorkoutSchema, SharedSchemaPayload } from './types';
 import { DEFAULT_SETTINGS } from './types';
 import { SyncManager, loadSyncConfig } from './sync.svelte';
 import { urgencyScore } from './utils';
@@ -7,11 +7,26 @@ import { IS_TAURI } from './platform';
 const EPOCH = new Date(0).toISOString();
 const WEB_STORAGE_KEY = 'theprocesstracker';
 
+/**
+ * Id of the schema the migration creates for pre-schema data. Deliberately a
+ * fixed string rather than a UUID: every device migrates independently, and a
+ * constant id makes them converge on one schema record instead of each
+ * inventing its own "My workout".
+ */
+const DEFAULT_SCHEMA_ID = 'default-schema';
+
 function now(): string {
   return new Date().toISOString();
 }
 
-function normalizeData(d: any): { exercises: Exercise[]; entries: WorkoutEntry[]; settings: Settings } {
+type StoredData = {
+  exercises: Exercise[];
+  entries: WorkoutEntry[];
+  settings: Settings;
+  schemas: WorkoutSchema[];
+};
+
+function normalizeData(d: any): StoredData {
   const entries: WorkoutEntry[] = (d.entries ?? []).map((e: any) => ({
     ...e,
     updatedAt: e.updatedAt ?? EPOCH,
@@ -29,40 +44,63 @@ function normalizeData(d: any): { exercises: Exercise[]; entries: WorkoutEntry[]
     }
   }
 
-  return {
-    exercises: (d.exercises ?? []).map((e: any) => ({
-      ...e,
-      updatedAt: e.updatedAt ?? EPOCH,
-      deletedAt: e.deletedAt ?? null,
-    })),
-    entries,
-    settings: {
-      ...DEFAULT_SETTINGS,
-      ...d.settings,
-      updatedAt: d.settings?.updatedAt ?? EPOCH,
-    },
+  const exercises: Exercise[] = (d.exercises ?? []).map((e: any) => ({
+    ...e,
+    updatedAt: e.updatedAt ?? EPOCH,
+    deletedAt: e.deletedAt ?? null,
+  }));
+
+  const settings: Settings = {
+    ...DEFAULT_SETTINGS,
+    ...d.settings,
+    updatedAt: d.settings?.updatedAt ?? EPOCH,
   };
+
+  const schemas: WorkoutSchema[] = (d.schemas ?? []).map((sc: any) => ({
+    ...sc,
+    updatedAt: sc.updatedAt ?? EPOCH,
+    deletedAt: sc.deletedAt ?? null,
+  }));
+
+  // Migrate pre-schema data: create the starter schema that everything without
+  // an explicit schemaId belongs to. Exercise records are intentionally left
+  // untouched — the primarySchemaId fallback adopts them, so migrating costs no
+  // updatedAt churn and old clients keep working against the same data.
+  if (!schemas.some(sc => !sc.deletedAt)) {
+    schemas.push({
+      id: DEFAULT_SCHEMA_ID,
+      name: 'My workout',
+      updatedAt: EPOCH,
+      deletedAt: null,
+    });
+  }
+  if (!settings.activeSchemaId || !schemas.some(sc => sc.id === settings.activeSchemaId && !sc.deletedAt)) {
+    settings.activeSchemaId = schemas.find(sc => !sc.deletedAt)!.id;
+  }
+
+  return { exercises, entries, settings, schemas };
 }
 
-async function writeData(exercises: Exercise[], entries: WorkoutEntry[], settings: Settings) {
+async function writeData(exercises: Exercise[], entries: WorkoutEntry[], settings: Settings, schemas: WorkoutSchema[]) {
+  const payload = { exercises, entries, settings, schemas };
   if (IS_TAURI) {
     const { mkdir, writeTextFile } = await import('@tauri-apps/plugin-fs');
     const { appDataDir, join } = await import('@tauri-apps/api/path');
     const dir = await appDataDir();
     await mkdir(dir, { recursive: true });
-    await writeTextFile(await join(dir, 'theprocesstracker.json'), JSON.stringify({ exercises, entries, settings }, null, 2));
+    await writeTextFile(await join(dir, 'theprocesstracker.json'), JSON.stringify(payload, null, 2));
   } else {
-    localStorage.setItem(WEB_STORAGE_KEY, JSON.stringify({ exercises, entries, settings }));
+    localStorage.setItem(WEB_STORAGE_KEY, JSON.stringify(payload));
   }
 }
 
-async function readData(): Promise<{ exercises: Exercise[]; entries: WorkoutEntry[]; settings: Settings }> {
+async function readData(): Promise<StoredData> {
   if (!IS_TAURI) {
     try {
       const raw = localStorage.getItem(WEB_STORAGE_KEY);
       if (raw) return normalizeData(JSON.parse(raw));
     } catch {}
-    return { exercises: [], entries: [], settings: { ...DEFAULT_SETTINGS } };
+    return normalizeData({});
   }
 
   const { exists, readTextFile, writeTextFile, mkdir } = await import('@tauri-apps/plugin-fs');
@@ -103,12 +141,13 @@ async function readData(): Promise<{ exercises: Exercise[]; entries: WorkoutEntr
     } catch {}
   }
 
-  return { exercises: [], entries: [], settings: { ...DEFAULT_SETTINGS } };
+  return normalizeData({});
 }
 
 class WorkoutStore {
   exercises = $state<Exercise[]>([]);
   entries = $state<WorkoutEntry[]>([]);
+  schemas = $state<WorkoutSchema[]>([]);
   // activeTimers: exerciseId → the phase currently being timed and when it began.
   // The workout queue alternates exercise ↔ rest on each button press until the
   // set is logged. Ephemeral — never persisted or synced.
@@ -123,6 +162,7 @@ class WorkoutStore {
     Promise.all([readData(), loadSyncConfig()]).then(([d, syncConfig]) => {
       this.exercises = d.exercises;
       this.entries = d.entries;
+      this.schemas = d.schemas;
       this.settings = d.settings;
       this.sync.syncConfig = syncConfig;
       this.ready = true;
@@ -142,8 +182,57 @@ class WorkoutStore {
   get syncConfig(): SyncConfig | null { return this.sync.syncConfig; }
   get syncStatus(): 'idle' | 'syncing' | 'error' { return this.sync.syncStatus; }
 
+  get liveSchemas(): WorkoutSchema[] {
+    return this.schemas.filter(s => !s.deletedAt);
+  }
+
+  /** Schemas in display order (alphabetical). */
+  get schemaList(): WorkoutSchema[] {
+    return [...this.liveSchemas].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * The schema that adopts exercises with no schemaId — data from before this
+   * feature, or from a client too old to set the field. Resolved the same way on
+   * every device so an exercise never appears in two schemas at once.
+   */
+  get primarySchemaId(): string | null {
+    const live = this.liveSchemas;
+    if (live.length === 0) return null;
+    if (live.some(s => s.id === DEFAULT_SCHEMA_ID)) return DEFAULT_SCHEMA_ID;
+    return [...live].sort((a, b) => a.id.localeCompare(b.id))[0].id;
+  }
+
+  /**
+   * The selected schema. Falls back to the primary one when the stored id
+   * points at a schema another device has since deleted.
+   */
+  get activeSchemaId(): string | null {
+    const id = this.settings.activeSchemaId;
+    if (id && this.liveSchemas.some(s => s.id === id)) return id;
+    return this.primarySchemaId;
+  }
+
+  get activeSchema(): WorkoutSchema | null {
+    const id = this.activeSchemaId;
+    return this.liveSchemas.find(s => s.id === id) ?? null;
+  }
+
+  /** Which schema an exercise belongs to, applying the orphan fallback. */
+  schemaIdOf(exercise: Exercise): string | null {
+    return exercise.schemaId ?? this.primarySchemaId;
+  }
+
+  exercisesInSchema(schemaId: string): Exercise[] {
+    return this.exercises.filter(e => !e.deletedAt && this.schemaIdOf(e) === schemaId);
+  }
+
   get activeExercises(): Exercise[] {
-    return this.exercises.filter(e => !e.deletedAt);
+    const schemaId = this.activeSchemaId;
+    // No schema at all (should not happen after migration) — show everything
+    // rather than presenting an empty app.
+    if (!schemaId) return this.exercises.filter(e => !e.deletedAt);
+    return this.exercisesInSchema(schemaId);
   }
 
   get priorityCue(): Array<{ exercise: Exercise; lastDate: string | null }> {
@@ -173,7 +262,7 @@ class WorkoutStore {
 
   // Called by SyncManager after merging a server response
   saveData() {
-    writeData(this.exercises, this.entries, this.settings);
+    writeData(this.exercises, this.entries, this.settings, this.schemas);
   }
 
   private save() {
@@ -188,9 +277,136 @@ class WorkoutStore {
   unlinkAccount() { return this.sync.unlinkAccount(); }
   deleteAccount() { return this.sync.deleteAccount(); }
 
+  // Schema operations
+  addSchema(name: string): string {
+    const id = crypto.randomUUID();
+    this.schemas.push({ id, name: this.uniqueSchemaName(name), updatedAt: now(), deletedAt: null });
+    this.settings.activeSchemaId = id;
+    this.settings.updatedAt = now();
+    this.save();
+    return id;
+  }
+
+  renameSchema(id: string, name: string) {
+    const schema = this.schemas.find(s => s.id === id);
+    const trimmed = name.trim();
+    if (!schema || !trimmed) return;
+    schema.name = trimmed;
+    schema.updatedAt = now();
+    this.save();
+  }
+
+  /**
+   * Soft-deletes a schema along with its exercises and their entries. Refuses to
+   * remove the last remaining schema — the app always needs one to add into.
+   */
+  removeSchema(id: string) {
+    if (this.liveSchemas.length <= 1) return;
+    const schema = this.schemas.find(s => s.id === id);
+    if (!schema) return;
+    const t = now();
+    for (const exercise of this.exercisesInSchema(id)) {
+      exercise.deletedAt = t;
+      exercise.updatedAt = t;
+      this.entries
+        .filter(e => e.exerciseId === exercise.id && !e.deletedAt)
+        .forEach(e => { e.deletedAt = t; e.updatedAt = t; });
+    }
+    schema.deletedAt = t;
+    schema.updatedAt = t;
+    if (this.settings.activeSchemaId === id) {
+      this.settings.activeSchemaId = this.primarySchemaId;
+      this.settings.updatedAt = t;
+    }
+    this.save();
+  }
+
+  setActiveSchema(id: string) {
+    if (!this.liveSchemas.some(s => s.id === id)) return;
+    this.settings.activeSchemaId = id;
+    this.settings.updatedAt = now();
+    this.save();
+  }
+
+  /** "Push day" → "Push day (2)" when the name is already taken. */
+  private uniqueSchemaName(name: string): string {
+    const base = name.trim() || 'Untitled schema';
+    const taken = new Set(this.liveSchemas.map(s => s.name));
+    if (!taken.has(base)) return base;
+    for (let n = 2; ; n++) {
+      const candidate = `${base} (${n})`;
+      if (!taken.has(candidate)) return candidate;
+    }
+  }
+
+  /** The snapshot uploaded when sharing — no ids, no timestamps, no history. */
+  schemaPayload(schemaId: string): SharedSchemaPayload {
+    const schema = this.liveSchemas.find(s => s.id === schemaId);
+    return {
+      version: 1,
+      name: schema?.name ?? 'Workout schema',
+      exercises: this.exercisesInSchema(schemaId).map(e => ({
+        name: e.name,
+        ...(e.description ? { description: e.description } : {}),
+        ...(e.targetSets ? { targetSets: e.targetSets } : {}),
+        ...(e.targetReps ? { targetReps: e.targetReps } : {}),
+        ...(e.colorOverride ? { colorOverride: { ...e.colorOverride } } : {}),
+      })),
+    };
+  }
+
+  /**
+   * Creates a new local schema from a shared payload and makes it active. Every
+   * record gets a fresh id so the import stays entirely separate from the
+   * sender's data — including its own workout history, which starts empty.
+   */
+  importSchema(payload: SharedSchemaPayload): { schemaId: string; count: number } {
+    const t = now();
+    const schemaId = crypto.randomUUID();
+    this.schemas.push({
+      id: schemaId,
+      name: this.uniqueSchemaName(payload.name),
+      importedAt: t,
+      updatedAt: t,
+      deletedAt: null,
+    });
+    for (const e of payload.exercises) {
+      this.exercises.push({
+        id: crypto.randomUUID(),
+        name: e.name,
+        schemaId,
+        ...(e.description ? { description: e.description } : {}),
+        ...(e.targetSets ? { targetSets: e.targetSets } : {}),
+        ...(e.targetReps ? { targetReps: e.targetReps } : {}),
+        ...(e.colorOverride ? { colorOverride: { ...e.colorOverride } } : {}),
+        updatedAt: t,
+        deletedAt: null,
+      });
+    }
+    this.settings.activeSchemaId = schemaId;
+    this.settings.updatedAt = t;
+    this.save();
+    return { schemaId, count: payload.exercises.length };
+  }
+
+  /** Moves an exercise into another schema, keeping its history. */
+  moveExerciseToSchema(exerciseId: string, schemaId: string) {
+    const exercise = this.exercises.find(e => e.id === exerciseId);
+    if (!exercise || !this.liveSchemas.some(s => s.id === schemaId)) return;
+    exercise.schemaId = schemaId;
+    exercise.updatedAt = now();
+    this.save();
+  }
+
   // Data operations
   addExercise(name: string) {
-    this.exercises.push({ id: crypto.randomUUID(), name, updatedAt: now(), deletedAt: null });
+    this.exercises.push({
+      id: crypto.randomUUID(),
+      name,
+      schemaId: this.activeSchemaId ?? undefined,
+      updatedAt: now(),
+      deletedAt: null,
+    });
     this.save();
   }
 

@@ -1,4 +1,4 @@
-import type { Exercise, WorkoutEntry, Settings, SyncConfig } from './types';
+import type { Exercise, WorkoutEntry, Settings, SyncConfig, WorkoutSchema } from './types';
 import { showToast } from './toasts.svelte';
 import { IS_TAURI } from './platform';
 
@@ -52,6 +52,7 @@ export async function saveSyncConfig(config: SyncConfig | null): Promise<void> {
 export interface SyncDataRef {
   exercises: Exercise[];
   entries: WorkoutEntry[];
+  schemas: WorkoutSchema[];
   settings: Settings;
   saveData(): void;
 }
@@ -132,6 +133,7 @@ export class SyncManager {
     const since = lastSyncedAt;
     const changedExercises = since ? this.data.exercises.filter(e => e.updatedAt > since) : this.data.exercises;
     const changedEntries = since ? this.data.entries.filter(e => e.updatedAt > since) : this.data.entries;
+    const changedSchemas = since ? this.data.schemas.filter(s => s.updatedAt > since) : this.data.schemas;
     const settingsChanged = !since || this.data.settings.updatedAt > since;
 
     try {
@@ -147,6 +149,7 @@ export class SyncManager {
           changes: {
             exercises: changedExercises,
             entries: changedEntries,
+            schemas: changedSchemas,
             settings: settingsChanged ? this.data.settings : null,
           },
         }),
@@ -168,6 +171,11 @@ export class SyncManager {
         const idx = this.data.entries.findIndex(e => e.id === se.id);
         if (idx === -1) this.data.entries.push(se);
         else if (se.updatedAt > this.data.entries[idx].updatedAt) this.data.entries[idx] = se;
+      }
+      for (const ss of (changes.schemas ?? []) as WorkoutSchema[]) {
+        const idx = this.data.schemas.findIndex(s => s.id === ss.id);
+        if (idx === -1) this.data.schemas.push(ss);
+        else if (ss.updatedAt > this.data.schemas[idx].updatedAt) this.data.schemas[idx] = ss;
       }
       if (changes.settings && changes.settings.updatedAt > this.data.settings.updatedAt) {
         Object.assign(this.data.settings, changes.settings);
@@ -222,7 +230,7 @@ export class SyncManager {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${guid}.${secret}`,
         },
-        body: JSON.stringify({ clientVersion: await appVersion(), lastSyncedAt: null, changes: { exercises: [], entries: [], settings: null } }),
+        body: JSON.stringify({ clientVersion: await appVersion(), lastSyncedAt: null, changes: { exercises: [], entries: [], schemas: [], settings: null } }),
       });
     } catch {
       throw new Error("Couldn't connect to the server — check the server URL.");
