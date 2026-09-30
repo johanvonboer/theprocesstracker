@@ -1,6 +1,6 @@
 [package]
 name = "theprocesstracker"
-version = "1.3.0"
+version = "1.3.1"
 description = "The Process – Workout tracker"
 authors = ["you"]
 edition = "2021"

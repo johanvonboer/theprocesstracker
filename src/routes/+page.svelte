@@ -1,4 +1,5 @@
 <script lang="ts">
+  import '@fontsource/iceland';
   import { store } from '$lib/store.svelte';
   import { Cloud, CloudOff, RefreshCw } from 'lucide-svelte';
   import { toasts, dismissToast, showToast } from '$lib/toasts.svelte';
