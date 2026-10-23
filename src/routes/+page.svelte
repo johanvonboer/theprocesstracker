@@ -1,73 +1,119 @@
 <script lang="ts">
-  import '@fontsource/iceland';
   import { store } from '$lib/store.svelte';
-  import { Cloud, CloudOff, RefreshCw } from 'lucide-svelte';
-  import { toasts, dismissToast, showToast } from '$lib/toasts.svelte';
+  import { ui, currentOverlay, openOverlay } from '$lib/ui.svelte';
+  import { Cloud, CloudOff, RefreshCw, WifiOff, LogIn, LogOut, Info, Sun, Moon, SunMoon } from 'lucide-svelte';
+  import { showToast } from '$lib/toasts.svelte';
   import ExercisesTab from '$lib/components/ExercisesTab.svelte';
   import WorkoutQueueTab from '$lib/components/WorkoutQueueTab.svelte';
   import SettingsTab from '$lib/components/SettingsTab.svelte';
-  import AboutTab from '$lib/components/AboutTab.svelte';
-  $effect(() => {
-    document.documentElement.setAttribute('data-theme', store.settings.theme);
-  });
+  import AboutSheet from '$lib/components/AboutSheet.svelte';
+  import AuthModal from '$lib/components/AuthModal.svelte';
+  import LinkDeviceModal from '$lib/components/LinkDeviceModal.svelte';
 
-  type Tab = 'exercises' | 'priority' | 'settings' | 'about';
-  let activeTab = $state<Tab>('priority');
+  type Tab = 'exercises' | 'priority' | 'settings';
+  // A share link lands on the Exercises tab, where the import preview opens.
+  let activeTab = $state<Tab>(ui.pendingShareCode ? 'exercises' : 'priority');
   let tabInitialized = false;
 
   $effect(() => {
     if (!tabInitialized && store.ready) {
       tabInitialized = true;
-      if (store.activeExercises.length === 0) {
+      if (store.activeExercises.length === 0 && !ui.pendingShareCode) {
         activeTab = 'exercises';
-        showToast('Welcome! Start by adding your exercises in the Setup exercises tab.', { type: 'info', persistent: true });
+        if (store.syncConfig) {
+          showToast('Welcome! Start by adding your exercises in the Setup exercises tab.', { type: 'info', persistent: true });
+        }
       }
     }
   });
+
+  const syncTitle = $derived(
+    store.syncStatus === 'error' ? 'Sync failed — click to retry'
+    : store.syncStatus === 'syncing' ? 'Syncing…'
+    : store.syncStatus === 'offline' ? "Offline — changes will sync when you're back online"
+    : 'Synced'
+  );
+
+  const overlay = $derived(currentOverlay());
+
+  // The theme button cycles system → light → dark.
+  const nextTheme = { system: 'light', light: 'dark', dark: 'system' } as const;
+  const themeTitle = $derived(
+    `Theme: ${store.settings.theme} — click for ${nextTheme[store.settings.theme]}`
+  );
+
+  let loggingOut = $state(false);
+
+  async function handleLogout(force = false) {
+    loggingOut = true;
+    try {
+      if (await store.logout(force)) {
+        showToast('Logged out. This device has been cleared.', { type: 'info' });
+      } else {
+        showToast(
+          "Some changes on this device haven't reached the server yet, and syncing isn't possible right now. Logging out clears this device, so those changes would be lost.",
+          { duration: 12000, action: { label: 'Log out anyway', run: () => handleLogout(true) } }
+        );
+      }
+    } finally {
+      loggingOut = false;
+    }
+  }
 </script>
-
-
-<div class="toast-container" aria-live="polite">
-  {#each toasts as toast (toast.id)}
-    <div
-      class="toast"
-      class:toast-info={toast.type === 'info'}
-      class:toast-persistent={toast.persistent}
-      onclick={toast.persistent ? () => dismissToast(toast.id) : undefined}
-      role={toast.persistent ? 'button' : undefined}
-    >
-      <span>{toast.message}</span>
-      {#if toast.persistent}
-        <span class="toast-tap-hint">Tap to dismiss</span>
-      {:else}
-        <button class="toast-dismiss" onclick={() => dismissToast(toast.id)}>✕</button>
-      {/if}
-    </div>
-  {/each}
-</div>
 
 {#if !store.ready}
   <p class="loading">Loading…</p>
 {/if}
-<main class:hidden={!store.ready}>
+<!-- Inert while an overlay is open: only the app itself, so popups that
+     password managers inject into the page stay usable over the modal. -->
+<main class:hidden={!store.ready} inert={!!overlay}>
   <header>
     <div class="title-row">
       <h1>The Process</h1>
-      {#if store.syncConfig}
+      <button
+        class="theme-btn"
+        onclick={() => store.updateSettings({ theme: nextTheme[store.settings.theme] })}
+        title={themeTitle}
+        aria-label={themeTitle}
+      >
+        {#if store.settings.theme === 'light'}
+          <Sun size={16} />
+        {:else if store.settings.theme === 'dark'}
+          <Moon size={16} />
+        {:else}
+          <SunMoon size={16} />
+        {/if}
+      </button>
+      <button class="about-btn" onclick={() => openOverlay('about')} title="About The Process">
+        <Info size={16} /><span class="about-label">About</span>
+      </button>
+      {#if store.sessionExpired}
+        <button class="header-link is-warning" onclick={() => openOverlay('login')}><LogIn size={14} />Log in again</button>
+      {:else if store.syncConfig}
         <button
           class="sync-icon-btn"
           class:is-error={store.syncStatus === 'error'}
           class:is-syncing={store.syncStatus === 'syncing'}
+          class:is-offline={store.syncStatus === 'offline'}
           onclick={() => store.manualSync()}
-          title={store.syncStatus === 'error' ? 'Sync failed — click to retry' : store.syncStatus === 'syncing' ? 'Syncing…' : 'Synced'}
+          title={syncTitle}
         >
           {#if store.syncStatus === 'syncing'}
             <RefreshCw size={16} />
           {:else if store.syncStatus === 'error'}
             <CloudOff size={16} />
+          {:else if store.syncStatus === 'offline'}
+            <WifiOff size={16} />
           {:else}
             <Cloud size={16} />
           {/if}
+        </button>
+      {:else}
+        <button class="header-link" onclick={() => openOverlay('login')}><LogIn size={14} />Log in</button>
+      {/if}
+      {#if store.account}
+        <button class="header-link" onclick={() => handleLogout()} disabled={loggingOut} title="Log out">
+          <LogOut size={14} /><span class="logout-label">Log out</span>
         </button>
       {/if}
     </div>
@@ -76,7 +122,6 @@
       <button class="tab" class:active={activeTab === 'priority'} onclick={() => (activeTab = 'priority')}>Workout queue</button>
       <button class="tab" class:active={activeTab === 'exercises'} onclick={() => (activeTab = 'exercises')}>Setup exercises</button>
       <button class="tab" class:active={activeTab === 'settings'} onclick={() => (activeTab = 'settings')}>Settings</button>
-      <button class="tab" class:active={activeTab === 'about'} onclick={() => (activeTab = 'about')}>About</button>
     </nav>
   </header>
 
@@ -86,137 +131,18 @@
     <WorkoutQueueTab />
   {:else if activeTab === 'settings'}
     <SettingsTab />
-  {:else if activeTab === 'about'}
-    <AboutTab />
   {/if}
 </main>
 
+{#if overlay === 'about'}
+  <AboutSheet />
+{:else if overlay === 'link-device'}
+  <LinkDeviceModal />
+{:else if overlay}
+  <AuthModal />
+{/if}
+
 <style>
-  /* ── Global resets & design tokens ── */
-  :global(*, *::before, *::after) { box-sizing: border-box; }
-
-  :global(html) {
-    --color-primary:   #2C3947;
-    --color-secondary: #547A95;
-    --color-accent1:   #C2A56D;
-    --color-accent2:   #E8EDF2;
-
-    /* Light mode */
-    --bg: #E8EDF2;
-    --text: #1a1a1a;
-    --card-bg: #ffffff;
-    --card-border: rgba(44, 57, 71, 0.14);
-    --interactive: #2C3947;
-    --interactive-hover: #547A95;
-    --interactive-text: #ffffff;
-    --accent: #547A95;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :global(html:not([data-theme='light'])) {
-      --bg: #2C3947;
-      --text: #E8EDF2;
-      --card-bg: #547A95;
-      --card-border: rgba(232, 237, 242, 0.08);
-      --interactive: #C2A56D;
-      --interactive-hover: #a88a52;
-      --interactive-text: #1a1a1a;
-      --accent: #C2A56D;
-    }
-  }
-
-  :global(html[data-theme='dark']) {
-    --bg: #2C3947;
-    --text: #E8EDF2;
-    --card-bg: #547A95;
-    --card-border: rgba(232, 237, 242, 0.08);
-    --interactive: #C2A56D;
-    --interactive-hover: #a88a52;
-    --interactive-text: #1a1a1a;
-    --accent: #C2A56D;
-  }
-
-  :global(body) {
-    margin: 0;
-    font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-    font-size: 15px;
-    line-height: 1.5;
-    color: var(--text);
-    background: var(--bg);
-  }
-
-  /* ── Base element styles (shared across all components) ── */
-  :global(input[type='text']),
-  :global(input[type='date']) {
-    padding: 0.5rem 0.75rem;
-    border-radius: 8px;
-    border: 1px solid rgba(128,128,128,0.35);
-    background: transparent;
-    color: inherit;
-    font-size: 0.9rem;
-    font-family: inherit;
-    outline: none;
-  }
-
-  :global(input[type='text']:focus),
-  :global(input[type='date']:focus) { border-color: var(--accent); }
-
-  :global(button) {
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    border: 1px solid transparent;
-    background: var(--interactive);
-    color: var(--interactive-text);
-    font-size: 0.9rem;
-    font-family: inherit;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-
-  :global(button:hover) { background: var(--interactive-hover); }
-  :global(button:disabled) { opacity: 0.4; cursor: default; }
-
-  /* ── Shared utility classes ── */
-  :global(.btn-icon) {
-    padding: 0.15rem 0.4rem;
-    font-size: 1.1rem;
-    line-height: 1;
-    background: none;
-    border: none;
-    display: inline-flex;
-    align-items: center;
-  }
-
-  :global(.btn-danger) { color: #ef4444; }
-  :global(.btn-danger:hover) { background: rgba(239,68,68,0.1); }
-
-  :global(.btn-confirm) { color: #22c55e; }
-  :global(.btn-confirm:hover) { background: rgba(34,197,94,0.1); }
-
-  :global(.btn-ghost) { color: inherit; opacity: 0.4; }
-  :global(.btn-ghost:hover) { opacity: 0.8; background: rgba(128,128,128,0.1); }
-
-  :global(.delete-confirm) {
-    display: flex;
-    align-items: center;
-    gap: 0.15rem;
-  }
-
-  :global(.delete-confirm span) {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: #ef4444;
-    white-space: nowrap;
-  }
-
-  :global(.empty) {
-    text-align: center;
-    opacity: 0.45;
-    margin-top: 4rem;
-    font-size: 0.95rem;
-  }
-
   /* ── Page layout ── */
   .loading {
     position: fixed;
@@ -244,6 +170,7 @@
     font-weight: 700;
     font-family: 'Iceland', sans-serif;
     display: inline-block;
+    white-space: nowrap;
     padding: 0.1em 0.35em;
     background-position: 0 0, 0 0.5em, 0.5em -0.5em, -0.5em 0;
     color: var(--text);
@@ -269,8 +196,40 @@
     gap: 0.5rem;
   }
 
-  .sync-icon-btn {
+  .theme-btn {
     margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    background: none;
+    border: none;
+    padding: 0.3rem;
+    color: inherit;
+    opacity: 0.55;
+  }
+
+  .theme-btn:hover { opacity: 1; background: rgba(128, 128, 128, 0.1); }
+
+  .about-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: none;
+    border: none;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: inherit;
+    opacity: 0.55;
+  }
+
+  .about-btn:hover { opacity: 1; background: rgba(128, 128, 128, 0.1); }
+
+  /* Phones: the title, About and Log in/out share one row — keep them to the icon. */
+  @media (max-width: 420px) {
+    .about-label, .logout-label { display: none; }
+  }
+
+  .sync-icon-btn {
     background: none;
     border: none;
     padding: 0.15rem;
@@ -284,72 +243,35 @@
   }
 
   .sync-icon-btn:hover { opacity: 0.75; background: none; }
-  .sync-icon-btn:not(.is-error):not(.is-syncing) { opacity: 1; color: #22c55e; }
+  .sync-icon-btn:not(.is-error):not(.is-syncing):not(.is-offline) { opacity: 1; color: #22c55e; }
   .sync-icon-btn.is-error { opacity: 1; color: #ef4444; }
   .sync-icon-btn.is-syncing { opacity: 0.6; color: inherit; }
   .sync-icon-btn.is-syncing :global(svg) { animation: spin 1s linear infinite; }
+  .sync-icon-btn.is-offline { opacity: 0.6; color: inherit; }
+
+  .header-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: inherit;
+    text-decoration: none;
+    opacity: 0.7;
+    padding: 0.3rem 0.6rem;
+    border-radius: 8px;
+    border: 1px solid rgba(128, 128, 128, 0.3);
+    background: none;
+    white-space: nowrap;
+  }
+
+  .header-link:hover { opacity: 1; background: rgba(128, 128, 128, 0.1); }
+  .header-link.is-warning { opacity: 1; color: var(--color-accent1); border-color: currentColor; }
 
   @keyframes spin {
     from { transform: rotate(0deg); }
     to   { transform: rotate(360deg); }
   }
-
-  /* ── Toasts ── */
-  .toast-container {
-    position: fixed;
-    top: 3.5rem;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    z-index: 100;
-    pointer-events: none;
-  }
-
-  .toast {
-    pointer-events: auto;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    background: #1f2937;
-    color: #f9fafb;
-    padding: 0.65rem 0.6rem 0.65rem 1rem;
-    border-radius: 10px;
-    font-size: 0.875rem;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-    border-left: 3px solid #ef4444;
-    min-width: 260px;
-    max-width: 420px;
-    white-space: pre-wrap;
-  }
-
-  .toast-info { border-left-color: #60a5fa; }
-
-  .toast-persistent { cursor: pointer; }
-  .toast-persistent:hover { background: #2d3748; }
-
-  .toast-tap-hint {
-    margin-left: auto;
-    flex-shrink: 0;
-    font-size: 0.75rem;
-    opacity: 0.4;
-    white-space: nowrap;
-  }
-
-  .toast-dismiss {
-    background: none;
-    border: none;
-    color: #f9fafb;
-    opacity: 0.45;
-    padding: 0.1rem 0.35rem;
-    font-size: 0.8rem;
-    cursor: pointer;
-    margin-left: auto;
-    flex-shrink: 0;
-  }
-
-  .toast-dismiss:hover { opacity: 1; background: none; }
 
   /* ── Tab navigation ── */
   .tabs {
@@ -364,8 +286,9 @@
     border: none;
     border-bottom: 2px solid transparent;
     margin-bottom: -2px;
-    padding: 0.4rem 1rem;
+    padding: 0.4rem 0.75rem;
     font-size: 0.9rem;
+    white-space: nowrap;
     font-weight: 500;
     color: inherit;
     opacity: 0.5;

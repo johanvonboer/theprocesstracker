@@ -1,52 +1,44 @@
 import type { Exercise, WorkoutEntry, Settings, SyncConfig, WorkoutSchema } from './types';
 import { showToast } from './toasts.svelte';
-import { IS_TAURI } from './platform';
+import { apiFetch, ApiError, NetworkError } from './api';
+import { version } from '../../package.json';
 
-const WEB_SYNC_CONFIG_KEY = 'theprocesstracker-sync-config';
+const SYNC_CONFIG_KEY = 'theprocesstracker-sync-config';
 
-export async function loadSyncConfig(): Promise<SyncConfig | null> {
+export function loadSyncConfig(): SyncConfig | null {
   try {
-    if (IS_TAURI) {
-      const { exists, readTextFile } = await import('@tauri-apps/plugin-fs');
-      const { appDataDir, join } = await import('@tauri-apps/api/path');
-      const path = await join(await appDataDir(), 'config.json');
-      if (await exists(path)) {
-        const data = JSON.parse(await readTextFile(path));
-        if (data?.serverUrl && data?.guid && data?.secret) {
-          return { lastSyncedAt: null, ...data } as SyncConfig;
-        }
-      }
-    } else {
-      const raw = localStorage.getItem(WEB_SYNC_CONFIG_KEY);
-      if (raw) {
-        const data = JSON.parse(raw);
-        if (data?.serverUrl && data?.guid && data?.secret) {
-          return { lastSyncedAt: null, ...data } as SyncConfig;
-        }
-      }
+    const raw = localStorage.getItem(SYNC_CONFIG_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (data?.account?.guid && data.account.username) {
+      return {
+        account: data.account,
+        legacy: null,
+        sessionExpired: !!data.sessionExpired,
+        lastSyncedAt: data.lastSyncedAt ?? null,
+      };
+    }
+    // Pre-account shape { serverUrl, guid, secret, lastSyncedAt } — and the new
+    // shape's legacy-only form. Either way it keeps syncing with the old token
+    // until the user upgrades it to an account.
+    const legacy = data?.legacy ?? data;
+    if (legacy?.guid && legacy?.secret) {
+      return {
+        account: null,
+        legacy: { guid: legacy.guid, secret: legacy.secret },
+        sessionExpired: false,
+        lastSyncedAt: data.lastSyncedAt ?? null,
+      };
     }
   } catch {}
   return null;
 }
 
-export async function saveSyncConfig(config: SyncConfig | null): Promise<void> {
-  if (IS_TAURI) {
-    const { mkdir } = await import('@tauri-apps/plugin-fs');
-    const { invoke } = await import('@tauri-apps/api/core');
-    const { appDataDir, join } = await import('@tauri-apps/api/path');
-    const dir = await appDataDir();
-    await mkdir(dir, { recursive: true });
-    await invoke('write_secret_file', {
-      path: await join(dir, 'config.json'),
-      content: JSON.stringify(config, null, 2),
-    });
-  } else {
-    if (config === null) {
-      localStorage.removeItem(WEB_SYNC_CONFIG_KEY);
-    } else {
-      localStorage.setItem(WEB_SYNC_CONFIG_KEY, JSON.stringify(config));
-    }
-  }
+function saveSyncConfig(config: SyncConfig | null) {
+  try {
+    if (config === null) localStorage.removeItem(SYNC_CONFIG_KEY);
+    else localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(config));
+  } catch {}
 }
 
 export interface SyncDataRef {
@@ -57,40 +49,70 @@ export interface SyncDataRef {
   saveData(): void;
 }
 
-let _appVersion: string | null = null;
-async function appVersion(): Promise<string> {
-  if (!_appVersion) {
-    if (IS_TAURI) {
-      const { getVersion } = await import('@tauri-apps/api/app');
-      _appVersion = await getVersion();
-    } else {
-      _appVersion = 'web';
-    }
-  }
-  return _appVersion;
-}
+export type SyncStatus = 'idle' | 'syncing' | 'error' | 'offline';
 
 const PERIODIC_SYNC_INTERVAL_MS = 10 * 60 * 1000;
 
 export class SyncManager {
   syncConfig = $state<SyncConfig | null>(null);
-  syncStatus = $state<'idle' | 'syncing' | 'error'>('idle');
+  syncStatus = $state<SyncStatus>('idle');
 
   private _retryCount = 0;
   private _retryTimer: ReturnType<typeof setTimeout> | null = null;
   private _debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private _periodicTimer: ReturnType<typeof setInterval> | null = null;
-  private _pendingSync = false;
+  private _inFlight: Promise<boolean> | null = null;
+  private _followUp: Promise<boolean> | null = null;
   private data: SyncDataRef;
 
   constructor(data: SyncDataRef) {
     this.data = data;
+    // Coming back online is the moment to push whatever was logged offline.
+    window.addEventListener('online', () => this.manualSync());
+    window.addEventListener('offline', () => {
+      if (this.syncConfig) this.syncStatus = 'offline';
+    });
+  }
+
+  /** Whether syncing is currently possible (an account or legacy token, and a live session). */
+  get canSync(): boolean {
+    const c = this.syncConfig;
+    return !!c && (!!c.legacy || (!!c.account && !c.sessionExpired));
+  }
+
+  /** Replaces and persists the config, starting or stopping background sync to match. */
+  setConfig(config: SyncConfig | null) {
+    this.syncConfig = config;
+    saveSyncConfig(config);
+    this._clearTimers();
+    this._retryCount = 0;
+    this.syncStatus = 'idle';
+    if (this.canSync) this.startPeriodicSync();
+  }
+
+  /** Persists a change made to the current config in place. */
+  persistConfig() {
+    saveSyncConfig(this.syncConfig ? $state.snapshot(this.syncConfig) : null);
+  }
+
+  /**
+   * The server no longer accepts the session. The data is kept — it still
+   * belongs to this account — and syncing pauses until a re-login.
+   */
+  markSessionExpired() {
+    const c = this.syncConfig;
+    if (!c?.account || c.sessionExpired) return;
+    c.sessionExpired = true;
+    this.persistConfig();
+    this._clearTimers();
+    this.syncStatus = 'error';
+    showToast('Your login has expired — log in again to resume syncing.');
   }
 
   startPeriodicSync() {
     this._stopPeriodicSync();
     this._periodicTimer = setInterval(() => {
-      if (document.visibilityState === 'visible' && this.syncConfig) {
+      if (document.visibilityState === 'visible' && this.canSync) {
         this.syncToServer();
       }
     }, PERIODIC_SYNC_INTERVAL_MS);
@@ -100,8 +122,14 @@ export class SyncManager {
     if (this._periodicTimer) { clearInterval(this._periodicTimer); this._periodicTimer = null; }
   }
 
+  private _clearTimers() {
+    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
+    if (this._debounceTimer) { clearTimeout(this._debounceTimer); this._debounceTimer = null; }
+    this._stopPeriodicSync();
+  }
+
   debouncedSync() {
-    if (!this.syncConfig) return;
+    if (!this.canSync) return;
     if (this._debounceTimer) clearTimeout(this._debounceTimer);
     this._debounceTimer = setTimeout(() => this.syncToServer(), 1500);
   }
@@ -110,7 +138,7 @@ export class SyncManager {
     this._retryCount = 0;
     if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
     if (this._debounceTimer) { clearTimeout(this._debounceTimer); this._debounceTimer = null; }
-    this.syncToServer();
+    return this.syncToServer();
   }
 
   private _scheduleRetry() {
@@ -122,29 +150,54 @@ export class SyncManager {
     }, 5 * 60 * 1000);
   }
 
-  async syncToServer() {
-    if (!this.syncConfig) return;
-    if (this.syncStatus === 'syncing') { this._pendingSync = true; return; }
+  /** True when something changed locally since the last successful sync. */
+  get hasUnsyncedChanges(): boolean {
+    const since = this.syncConfig?.lastSyncedAt;
+    if (!since) return true;
+    return this.data.exercises.some(e => e.updatedAt > since)
+      || this.data.entries.some(e => e.updatedAt > since)
+      || this.data.schemas.some(s => s.updatedAt > since)
+      || this.data.settings.updatedAt > since;
+  }
 
+  /**
+   * Sends local changes and merges the server's. Resolves true on success.
+   * A call made while a sync is running is queued behind it, and resolves with
+   * the outcome of that follow-up sync.
+   */
+  syncToServer(): Promise<boolean> {
+    if (!this.canSync) return Promise.resolve(false);
+    if (this._inFlight) {
+      // Every call made during a sync shares one follow-up round.
+      this._followUp ??= this._inFlight.then(() => {
+        this._followUp = null;
+        return this.syncToServer();
+      });
+      return this._followUp;
+    }
+    this._inFlight = this._sync().finally(() => { this._inFlight = null; });
+    return this._inFlight;
+  }
+
+  private async _sync(): Promise<boolean> {
+    const config = this.syncConfig!;
+    if (!navigator.onLine) {
+      this.syncStatus = 'offline';
+      return false;
+    }
     this.syncStatus = 'syncing';
-    this._pendingSync = false;
 
-    const { serverUrl, guid, secret, lastSyncedAt } = this.syncConfig;
-    const since = lastSyncedAt;
+    const since = config.lastSyncedAt;
     const changedExercises = since ? this.data.exercises.filter(e => e.updatedAt > since) : this.data.exercises;
     const changedEntries = since ? this.data.entries.filter(e => e.updatedAt > since) : this.data.entries;
     const changedSchemas = since ? this.data.schemas.filter(s => s.updatedAt > since) : this.data.schemas;
     const settingsChanged = !since || this.data.settings.updatedAt > since;
 
     try {
-      const res = await fetch(`${serverUrl}/api/v1/sync`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${guid}.${secret}`,
-        },
-        body: JSON.stringify({
-          clientVersion: await appVersion(),
+      const { syncedAt, changes } = await apiFetch('/api/v1/sync', {
+        legacy: config.account ? null : config.legacy,
+        body: {
+          clientVersion: version,
           lastSyncedAt: since,
           changes: {
             exercises: changedExercises,
@@ -152,15 +205,11 @@ export class SyncManager {
             schemas: changedSchemas,
             settings: settingsChanged ? this.data.settings : null,
           },
-        }),
+        },
       });
 
-      if (res.status === 401 || res.status === 403) throw new Error('Sync credentials rejected — try relinking your account.');
-      if (res.status >= 500) throw new Error('The sync server ran into a problem.');
-      if (!res.ok) throw new Error('Sync request failed.');
-
-      if (!this.syncConfig) { this.syncStatus = 'idle'; return; }
-      const { syncedAt, changes } = await res.json();
+      // Logged out (or switched user) while the request was in flight.
+      if (this.syncConfig !== config) { this.syncStatus = 'idle'; return false; }
 
       for (const se of (changes.exercises ?? []) as Exercise[]) {
         const idx = this.data.exercises.findIndex(e => e.id === se.id);
@@ -181,95 +230,40 @@ export class SyncManager {
         Object.assign(this.data.settings, changes.settings);
       }
 
-      const updated: SyncConfig = { ...this.syncConfig, lastSyncedAt: syncedAt };
-      this.syncConfig = updated;
-      await saveSyncConfig(updated);
+      config.lastSyncedAt = syncedAt;
+      this.persistConfig();
       this.data.saveData();
 
       this.syncStatus = 'idle';
       this._retryCount = 0;
       if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
-      if (this._pendingSync) this.syncToServer();
+      return true;
 
     } catch (e: unknown) {
-      if (!this.syncConfig) { this.syncStatus = 'idle'; return; }
+      if (this.syncConfig !== config) { this.syncStatus = 'idle'; return false; }
+
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        this.syncStatus = 'error';
+        if (config.account) {
+          this.markSessionExpired();
+        } else {
+          showToast('Sync credentials rejected — this sync account may have been deleted.');
+        }
+        return false;
+      }
+
+      if (e instanceof NetworkError && !navigator.onLine) {
+        // The 'online' listener resumes syncing; no need to nag or retry.
+        this.syncStatus = 'offline';
+        return false;
+      }
+
       this.syncStatus = 'error';
-      const msg = e instanceof TypeError ? "Couldn't reach the sync server — will retry."
+      showToast(e instanceof NetworkError ? "Couldn't reach the sync server — will retry."
         : e instanceof Error ? e.message
-        : 'Sync failed — will retry.';
-      showToast(msg);
+        : 'Sync failed — will retry.');
       this._scheduleRetry();
+      return false;
     }
-  }
-
-  async createAccount(serverUrl: string): Promise<void> {
-    const url = serverUrl.replace(/\/$/, '');
-    let res: Response;
-    try {
-      res = await fetch(`${url}/api/v1/account/create`, { method: 'POST' });
-    } catch {
-      throw new Error("Couldn't connect to the server — check the server URL.");
-    }
-    if (res.status >= 500) throw new Error('The server ran into a problem — try again later.');
-    if (!res.ok) throw new Error('Account creation failed — try again later.');
-    const { guid, secret } = await res.json();
-    const config: SyncConfig = { serverUrl: url, guid, secret, lastSyncedAt: null };
-    await saveSyncConfig(config);
-    this.syncConfig = config;
-    this.syncToServer();
-    this.startPeriodicSync();
-  }
-
-  async linkAccount(serverUrl: string, guid: string, secret: string): Promise<void> {
-    const url = serverUrl.replace(/\/$/, '');
-    let res: Response;
-    try {
-      res = await fetch(`${url}/api/v1/sync`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${guid}.${secret}`,
-        },
-        body: JSON.stringify({ clientVersion: await appVersion(), lastSyncedAt: null, changes: { exercises: [], entries: [], schemas: [], settings: null } }),
-      });
-    } catch {
-      throw new Error("Couldn't connect to the server — check the server URL.");
-    }
-    if (res.status === 401 || res.status === 403) throw new Error('Invalid account credentials — check your GUID and secret.');
-    if (res.status >= 500) throw new Error('The server ran into a problem — try again later.');
-    if (!res.ok) throw new Error('Link failed — try again later.');
-    const config: SyncConfig = { serverUrl: url, guid, secret, lastSyncedAt: null };
-    await saveSyncConfig(config);
-    this.syncConfig = config;
-    this.syncToServer();
-    this.startPeriodicSync();
-  }
-
-  async unlinkAccount(): Promise<void> {
-    await saveSyncConfig(null);
-    this.syncConfig = null;
-    this.syncStatus = 'idle';
-    this._retryCount = 0;
-    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
-    if (this._debounceTimer) { clearTimeout(this._debounceTimer); this._debounceTimer = null; }
-    this._stopPeriodicSync();
-  }
-
-  async deleteAccount(): Promise<void> {
-    if (!this.syncConfig) throw new Error('No account to delete.');
-    const { serverUrl, guid, secret } = this.syncConfig;
-    let res: Response;
-    try {
-      res = await fetch(`${serverUrl}/api/v1/account`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${guid}.${secret}` },
-      });
-    } catch {
-      throw new Error("Couldn't connect to the server.");
-    }
-    if (res.status === 401 || res.status === 403) throw new Error('Credentials rejected — account may already be deleted.');
-    if (res.status >= 500) throw new Error('The server ran into a problem — try again later.');
-    if (!res.ok) throw new Error('Delete failed — try again later.');
-    await this.unlinkAccount();
   }
 }

@@ -1,9 +1,7 @@
-import type { SharedSchemaPayload } from './types';
+import type { LegacyCredentials, SharedSchemaPayload } from './types';
+import { API_URL } from './api';
 
-/** Used for sharing when the user has no sync account of their own. */
-export const DEFAULT_API_URL = 'https://api.theprocesstracker.com';
-
-/** Where share links point. The site redirects into the app via deep link. */
+/** Where share links point: the web app's /s/<code> route opens the import. */
 const SHARE_LINK_BASE = 'https://theprocesstracker.com/s';
 
 /** Share codes are opaque server-generated strings. */
@@ -13,31 +11,28 @@ const MAX_EXERCISES = 200;
 const MAX_NAME_LEN = 80;
 const MAX_DESC_LEN = 500;
 
-function base(serverUrl?: string | null): string {
-  return (serverUrl || DEFAULT_API_URL).replace(/\/$/, '');
-}
-
 export function shareLinkFor(code: string): string {
   return `${SHARE_LINK_BASE}/${code}`;
 }
 
 /**
  * Uploads a schema snapshot and returns the code others can scan or paste.
- * Deliberately unauthenticated so users without a sync account can share too;
- * the auth header is sent when available so the server can attribute uploads.
+ * Works without an account; the session cookie (or an old-style sync token)
+ * is sent when there is one so the server can rate-limit per account.
  */
 export async function shareSchema(
   payload: SharedSchemaPayload,
-  auth?: { serverUrl: string; guid: string; secret: string } | null,
+  legacy?: LegacyCredentials | null,
 ): Promise<{ code: string; url: string; expiresAt: string | null }> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (auth) headers['Authorization'] = `Bearer ${auth.guid}.${auth.secret}`;
+  if (legacy) headers['Authorization'] = `Bearer ${legacy.guid}.${legacy.secret}`;
 
   let res: Response;
   try {
-    res = await fetch(`${base(auth?.serverUrl)}/api/v1/schema/share`, {
+    res = await fetch(`${API_URL}/api/v1/schema/share`, {
       method: 'POST',
       headers,
+      credentials: 'include',
       body: JSON.stringify(payload),
     });
   } catch {
@@ -58,13 +53,10 @@ export async function shareSchema(
   };
 }
 
-export async function fetchSharedSchema(
-  code: string,
-  serverUrl?: string | null,
-): Promise<SharedSchemaPayload> {
+export async function fetchSharedSchema(code: string): Promise<SharedSchemaPayload> {
   let res: Response;
   try {
-    res = await fetch(`${base(serverUrl)}/api/v1/schema/share/${encodeURIComponent(code)}`);
+    res = await fetch(`${API_URL}/api/v1/schema/share/${encodeURIComponent(code)}`);
   } catch {
     throw new Error("Couldn't reach the server — check your connection and try again.");
   }
@@ -132,7 +124,7 @@ export function validateSharedPayload(raw: unknown): SharedSchemaPayload {
 
 /**
  * Pulls a share code out of whatever the user scanned or pasted: a share link,
- * an app deep link, or the bare code itself.
+ * an old app deep link, or the bare code itself.
  */
 export function parseShareCode(raw: string): string | null {
   const input = raw.trim();

@@ -1,13 +1,17 @@
 <script lang="ts">
   import { store } from '$lib/store.svelte';
   import QRCode from 'qrcode';
-  import QrScanner from 'qr-scanner';
   import { showToast } from '$lib/toasts.svelte';
+  import { ui } from '$lib/ui.svelte';
   import { shareSchema, fetchSharedSchema, parseShareCode } from '$lib/share';
+  import QrScanOverlay from './QrScanOverlay.svelte';
   import type { SharedSchemaPayload } from '$lib/types';
   import { PenLine, Trash2, Share2, ScanLine, Plus, Copy } from 'lucide-svelte';
 
   // ── Schema selection & editing ────────────────────────────────
+  // Switching, creating and importing schemas sit behind "Advanced" — most
+  // people only ever use the one schema.
+  let advancedOpen = $state(false);
   let addingSchema = $state(false);
   let newSchemaName = $state('');
   let renaming = $state(false);
@@ -55,7 +59,7 @@
     }
     shareBusy = true;
     try {
-      const { code, url } = await shareSchema(payload, store.syncConfig);
+      const { code, url } = await shareSchema(payload, store.legacyCredentials);
       const qr = await QRCode.toDataURL(url, {
         width: 300,
         margin: 2,
@@ -75,7 +79,7 @@
       await navigator.clipboard.writeText(share.url);
       showToast('Link copied', { type: 'info' });
     } catch {
-      // WebView clipboard access can be denied — the link is on screen anyway.
+      // Clipboard access can be denied — the link is on screen anyway.
       showToast('Could not copy — select the link to copy it manually');
     }
   }
@@ -86,59 +90,24 @@
   let importBusy = $state(false);
   let preview = $state<SharedSchemaPayload | null>(null);
 
-  const isAndroid = navigator.userAgent.includes('Android');
   // Capability check only — never probe the camera here, or opening this tab
-  // would trigger a permission prompt. See SettingsTab for the same reasoning.
-  const hasCamera = isAndroid || !!navigator.mediaDevices?.getUserMedia;
-
+  // would trigger a permission prompt.
+  const hasCamera = !!navigator.mediaDevices?.getUserMedia;
   let showScanOverlay = $state(false);
-  let scanVideoEl = $state<HTMLVideoElement | null>(null);
-  let qrScanner: QrScanner | null = null;
 
-  $effect(() => {
-    if (!showScanOverlay || !scanVideoEl || isAndroid) return;
-    qrScanner = new QrScanner(
-      scanVideoEl,
-      (result) => handleScannedContent(result.data),
-      { returnDetailedScanResult: true, highlightScanRegion: true },
-    );
-    qrScanner.start().catch(() => {
-      showToast('Could not access camera');
-      showScanOverlay = false;
-    });
-    return () => { qrScanner?.destroy(); qrScanner = null; };
-  });
-
-  async function scanForImport() {
-    if (isAndroid) {
-      importBusy = true;
-      try {
-        const { scan, checkPermissions, requestPermissions, Format } = await import('@tauri-apps/plugin-barcode-scanner');
-        let permission = await checkPermissions();
-        if (permission !== 'granted') permission = await requestPermissions();
-        if (permission !== 'granted') {
-          showToast('Camera permission is required to scan QR codes');
-          return;
-        }
-        const result = await scan({ windowed: false, formats: [Format.QRCode] });
-        await handleScannedContent(result.content);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : typeof e === 'string' ? e : JSON.stringify(e);
-        console.error('Scan error:', e);
-        if (msg !== 'scan cancelled') showToast(msg || 'Failed to scan QR code');
-      } finally {
-        importBusy = false;
-      }
-    } else {
-      showScanOverlay = true;
-    }
-  }
-
-  async function handleScannedContent(raw: string) {
-    qrScanner?.stop();
+  function handleScannedContent(raw: string) {
     showScanOverlay = false;
-    await loadSharedSchema(raw);
+    loadSharedSchema(raw);
   }
+
+  // A /s/<code> share link was opened — go straight to its preview.
+  $effect(() => {
+    const code = ui.pendingShareCode;
+    if (!code) return;
+    ui.pendingShareCode = null;
+    importOpen = true;
+    loadSharedSchema(code);
+  });
 
   async function loadSharedSchema(raw: string) {
     const code = parseShareCode(raw);
@@ -148,7 +117,7 @@
     }
     importBusy = true;
     try {
-      preview = await fetchSharedSchema(code, store.syncConfig?.serverUrl);
+      preview = await fetchSharedSchema(code);
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : 'Could not fetch that schema.');
     } finally {
@@ -174,72 +143,83 @@
 </script>
 
 <section class="schema-bar">
-  <div class="schema-row">
-    {#if renaming}
-      <input
-        class="schema-rename"
-        type="text"
-        bind:value={renameValue}
-        onkeydown={(e) => { if (e.key === 'Enter') confirmRename(); if (e.key === 'Escape') renaming = false; }}
-        onblur={confirmRename}
-        autofocus
-      />
-      <button class="btn-icon btn-confirm" onclick={confirmRename} title="Confirm">✓</button>
-      <button class="btn-icon btn-ghost" onclick={() => renaming = false} title="Cancel">✗</button>
-    {:else}
-      <select
-        class="schema-select"
-        value={store.activeSchemaId ?? ''}
-        onchange={(e) => store.setActiveSchema((e.target as HTMLSelectElement).value)}
-        aria-label="Active workout schema"
-      >
-        {#each store.schemaList as schema (schema.id)}
-          <option value={schema.id}>{schema.name}</option>
-        {/each}
-      </select>
-
-      <div class="schema-actions">
-        <button class="btn-icon btn-ghost" onclick={startRename} title="Rename schema"><PenLine size={14} /></button>
-        {#if store.liveSchemas.length > 1}
-          {#if pendingDelete}
-            <div class="delete-confirm">
-              <span>Delete?</span>
-              <button class="btn-icon btn-danger" onclick={handleDelete} title="Confirm">✓</button>
-              <button class="btn-icon btn-ghost" onclick={() => pendingDelete = false} title="Cancel">✗</button>
-            </div>
-          {:else}
-            <button class="btn-icon btn-ghost" onclick={() => pendingDelete = true} title="Delete schema and its exercises"><Trash2 size={14} /></button>
-          {/if}
-        {/if}
-      </div>
-    {/if}
-  </div>
-
-  {#if pendingDelete}
-    <p class="schema-warning">
-      Deletes this schema along with its {store.activeExercises.length} exercise{store.activeExercises.length === 1 ? '' : 's'} and their history.
-    </p>
-  {/if}
-
   <div class="schema-buttons">
     <button class="btn-schema" onclick={handleShare} disabled={shareBusy}>
       <Share2 size={14} />{shareBusy ? 'Sharing…' : 'Share'}
     </button>
-    <button class="btn-schema" onclick={() => importOpen = true}>
-      <ScanLine size={14} />Import
+    <button class="advanced-toggle" onclick={() => advancedOpen = !advancedOpen} aria-expanded={advancedOpen}>
+      Advanced
+      <span class="advanced-chevron" class:open={advancedOpen}>›</span>
     </button>
-    {#if addingSchema}
-      <form class="new-schema-form" onsubmit={(e) => { e.preventDefault(); handleAddSchema(); }}>
-        <input type="text" placeholder="Schema name..." bind:value={newSchemaName} autofocus />
-        <button type="submit" disabled={!newSchemaName.trim()}>Create</button>
-        <button type="button" class="btn-ghost" onclick={() => { addingSchema = false; newSchemaName = ''; }}>Cancel</button>
-      </form>
-    {:else}
-      <button class="btn-schema" onclick={() => addingSchema = true}>
-        <Plus size={14} />New schema
-      </button>
-    {/if}
   </div>
+
+  {#if advancedOpen}
+    <div class="advanced-panel">
+      <div class="schema-row">
+        {#if renaming}
+          <input
+            class="schema-rename"
+            type="text"
+            bind:value={renameValue}
+            onkeydown={(e) => { if (e.key === 'Enter') confirmRename(); if (e.key === 'Escape') renaming = false; }}
+            onblur={confirmRename}
+            autofocus
+          />
+          <button class="btn-icon btn-confirm" onclick={confirmRename} title="Confirm">✓</button>
+          <button class="btn-icon btn-ghost" onclick={() => renaming = false} title="Cancel">✗</button>
+        {:else}
+          <select
+            class="schema-select"
+            value={store.activeSchemaId ?? ''}
+            onchange={(e) => store.setActiveSchema((e.target as HTMLSelectElement).value)}
+            aria-label="Active workout schema"
+          >
+            {#each store.schemaList as schema (schema.id)}
+              <option value={schema.id}>{schema.name}</option>
+            {/each}
+          </select>
+
+          <div class="schema-actions">
+            <button class="btn-icon btn-ghost" onclick={startRename} title="Rename schema"><PenLine size={14} /></button>
+            {#if store.liveSchemas.length > 1}
+              {#if pendingDelete}
+                <div class="delete-confirm">
+                  <span>Delete?</span>
+                  <button class="btn-icon btn-danger" onclick={handleDelete} title="Confirm">✓</button>
+                  <button class="btn-icon btn-ghost" onclick={() => pendingDelete = false} title="Cancel">✗</button>
+                </div>
+              {:else}
+                <button class="btn-icon btn-ghost" onclick={() => pendingDelete = true} title="Delete schema and its exercises"><Trash2 size={14} /></button>
+              {/if}
+            {/if}
+          </div>
+        {/if}
+      </div>
+
+      {#if pendingDelete}
+        <p class="schema-warning">
+          Deletes this schema along with its {store.activeExercises.length} exercise{store.activeExercises.length === 1 ? '' : 's'} and their history.
+        </p>
+      {/if}
+
+      <div class="schema-buttons">
+        <button class="btn-schema" onclick={() => importOpen = true}>
+          <ScanLine size={14} />Import
+        </button>
+        {#if addingSchema}
+          <form class="new-schema-form" onsubmit={(e) => { e.preventDefault(); handleAddSchema(); }}>
+            <input type="text" placeholder="Schema name..." bind:value={newSchemaName} autofocus />
+            <button type="submit" disabled={!newSchemaName.trim()}>Create</button>
+            <button type="button" class="btn-ghost" onclick={() => { addingSchema = false; newSchemaName = ''; }}>Cancel</button>
+          </form>
+        {:else}
+          <button class="btn-schema" onclick={() => addingSchema = true}>
+            <Plus size={14} />New schema
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/if}
 </section>
 
 {#if importOpen && !preview}
@@ -248,7 +228,7 @@
     <div class="qr-content">
       <h2 class="overlay-title">Import a schema</h2>
       {#if hasCamera}
-        <button onclick={scanForImport} disabled={importBusy}>
+        <button onclick={() => showScanOverlay = true} disabled={importBusy}>
           <ScanLine size={16} />{importBusy ? 'Working…' : 'Scan QR code'}
         </button>
         <p class="qr-hint">or enter the share code</p>
@@ -288,12 +268,7 @@
 {/if}
 
 {#if showScanOverlay}
-  <div class="qr-overlay">
-    <button class="qr-back" onclick={() => showScanOverlay = false}>← Back</button>
-    <div class="qr-content">
-      <video bind:this={scanVideoEl} class="scan-video"></video>
-    </div>
-  </div>
+  <QrScanOverlay onscan={handleScannedContent} onclose={() => showScanOverlay = false} />
 {/if}
 
 {#if share}
@@ -301,7 +276,7 @@
     <button class="qr-back" onclick={() => share = null}>← Back</button>
     <div class="qr-content">
       <img src={share.qr} alt="Schema sharing QR code" class="qr-image" />
-      <p class="qr-hint">Have them scan this from the Import button in their app — or send them the code below.</p>
+      <p class="qr-hint">Have them scan this with their phone camera, or send them the link or code below.</p>
       <div class="share-code">{share.code}</div>
       <div class="share-link">
         <code>{share.url}</code>
@@ -319,6 +294,37 @@
     margin-bottom: 1.25rem;
     padding-bottom: 1rem;
     border-bottom: 1px solid rgba(128,128,128,0.15);
+  }
+
+  .advanced-toggle {
+    margin-left: auto;
+    background: none;
+    border: none;
+    padding: 0.35rem 0;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: inherit;
+    opacity: 0.6;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .advanced-toggle:hover { opacity: 1; background: none; }
+
+  .advanced-chevron {
+    display: inline-block;
+    font-size: 1rem;
+    line-height: 1;
+    transition: transform 0.2s ease;
+  }
+
+  .advanced-chevron.open { transform: rotate(90deg); }
+
+  .advanced-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
   }
 
   .schema-row {
@@ -412,7 +418,6 @@
   .overlay-title { margin: 0; font-size: 1.15rem; text-align: center; }
 
   .qr-image { border-radius: 12px; display: block; max-width: 100%; }
-  .scan-video { width: 100%; max-width: 480px; border-radius: 12px; display: block; }
 
   .qr-hint {
     font-size: 0.9rem;

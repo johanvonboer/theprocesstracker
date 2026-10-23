@@ -2,9 +2,11 @@
 
 ## What is it
 
-**The Process** is a cross-platform workout tracker. Users define exercises, log dates they performed them, and see a priority queue that surfaces the exercises they've gone longest without. Optional cloud sync keeps data in sync across devices.
+**The Process** is a workout tracker web app. Users define exercises, log dates they performed them, and see a priority queue that surfaces the exercises they've gone longest without. An optional account syncs data across devices.
 
-Targets: Linux desktop, Android (primary mobile), macOS/Windows.
+It is a **PWA**: installable to the home screen, and usable offline once it has been opened. It works fully without an account — data lives in the browser — and an account (username + password) adds sync. Mobile browsers are the primary target.
+
+> The `webapp` branch dropped the earlier Tauri desktop/Android shell. `main` still has it.
 
 ---
 
@@ -14,12 +16,12 @@ Targets: Linux desktop, Android (primary mobile), macOS/Windows.
 |---|---|
 | UI framework | Svelte 5 (runes/`$state`) + SvelteKit 2 |
 | Language | TypeScript 5.6 (strict) |
-| Desktop/mobile shell | Tauri 2 (Rust) |
 | Build | Vite 6, adapter-static (SPA, no SSR) |
+| Offline | SvelteKit service worker (`src/service-worker.ts`) + web manifest |
 | Icons | lucide-svelte |
-| QR codes | qrcode |
+| QR codes | qrcode (render), qr-scanner (webcam scan) |
 
-The frontend is a pure SPA. Tauri wraps it with a native window and provides file system access. There is no server-side rendering (`ssr = false` in `+layout.ts`).
+The frontend is a pure SPA: every route is rendered client-side from the `index.html` fallback (`ssr = false` in `+layout.ts`, `paths.relative = false` so nested routes like `/s/<code>` load their assets). The server is a separate repo, `theprocesstracker-server` (PHP/Slim, file-based storage), at `api.theprocesstracker.com`.
 
 ---
 
@@ -27,29 +29,45 @@ The frontend is a pure SPA. Tauri wraps it with a native window and provides fil
 
 ```
 src/
-  app.html                   HTML shell (loads Iceland font)
+  app.html                   HTML shell (manifest, icons, theme-color)
+  service-worker.ts          Precaches the build; serves the app shell offline
   lib/
     types.ts                 All TypeScript interfaces & DEFAULT_SETTINGS
-    toasts.svelte.ts         Global toast notification store (19 lines)
+    toasts.svelte.ts         Global toast notification store
+    ui.svelte.ts             Cross-route UI hand-offs (pending share code, install prompt) + overlays
     utils.ts                 Pure date/color helpers (today, fmtDate, etc.)
-    store.svelte.ts          WorkoutStore — data operations & persistence
-    sync.svelte.ts           SyncManager — cloud sync, retry, account mgmt
+    api.ts                   API base URL, fetch helper, account endpoints (pure, no store dep)
+    store.svelte.ts          WorkoutStore — data operations, persistence, login/logout flows
+    sync.svelte.ts           SyncManager — sync, retry, offline handling, session expiry
     share.ts                 Schema share/import API client (pure, no store dep)
     components/
       SchemaBar.svelte       Schema selector + share/import overlays
       ExercisesTab.svelte    "Setup exercises" tab
       WorkoutQueueTab.svelte "Workout queue" tab
-      SettingsTab.svelte     "Settings" tab (appearance + sync)
+      SettingsTab.svelte     "Settings" tab (account + queue colors)
+      AccountSection.svelte  Account management (in Settings)
+      AboutSheet.svelte      Full-screen About: intro, features, privacy, feedback, policy
+      FeedbackForm.svelte    Feedback form (in About)
+      PrivacyPolicy.svelte   Collapsible privacy policy (in About)
+      AuthModal.svelte       Login modal; switches between the three forms below
+      LoginForm.svelte / RegisterForm.svelte / ForgotPasswordForm.svelte
+      LinkDeviceModal.svelte QR code that logs another device in (from Settings)
+      Modal.svelte           Native <dialog> wrapper, card or full-screen sheet (takes props)
+      QrScanOverlay.svelte   Full-screen webcam QR scanner (takes props)
+  params/overlay.ts          Route matcher for the overlay names
   routes/
     +layout.ts               Sets ssr = false
-    +page.svelte             App shell: tab routing, toasts, global CSS
+    +layout.svelte           Global CSS, toasts, theme, service worker registration
+    +page.svelte             The app: header, tabs, overlays
+    [overlay=overlay]/       /about, /login, /register, /forgot-password — open the app with that overlay
+    link/                    Login QR codes (/link#<code>) — hands the code to the login form
+    (auth)/                  Email-link pages sharing one card layout:
+      reset-password/ verify-email/
+    s/[code]/                Share links — hands the code to the app's import preview
 
-src-tauri/
-  src/
-    main.rs                  Entry point (calls lib::run)
-    lib.rs                   Tauri setup + write_secret_file command
-  tauri.conf.json            App name, window size, bundle config
-  Cargo.toml                 Rust dependencies (tauri, serde, plugins)
+static/
+  manifest.webmanifest       PWA manifest
+  icons/                     Generated by `npm run icons` from icon.png / icon-android.png
 ```
 
 ---
@@ -57,23 +75,39 @@ src-tauri/
 ## Architecture
 
 ```
-+page.svelte          (shell: tabs, toasts, global CSS)
-    │
-    ├── ExercisesTab.svelte     (local UI state + store calls)
-    │     └── SchemaBar.svelte  (schema selector, share QR, import scan)
-    ├── WorkoutQueueTab.svelte  (local UI state + store calls)
-    └── SettingsTab.svelte      (local UI state + store calls)
++layout.svelte        (global CSS, toasts, theme, service worker)
+    ├── +page.svelte            (the app: header, tabs, overlays)
+    │     ├── ExercisesTab.svelte   (local UI state + store calls)
+    │     │     └── SchemaBar.svelte  (schema selector, share QR, import scan)
+    │     ├── WorkoutQueueTab.svelte
+    │     ├── SettingsTab.svelte
+    │     │     └── AccountSection.svelte
+    │     ├── AboutSheet.svelte     (overlay 'about')
+    │     ├── AuthModal.svelte      (overlays 'login' | 'register' | 'forgot-password')
+    │     └── LinkDeviceModal.svelte (overlay 'link-device')
+    └── (auth)/+layout.svelte   (password reset / email confirmation pages)
 
-store.svelte.ts       (WorkoutStore: reactive data + file I/O)
-    └── sync.svelte.ts          (SyncManager: HTTP sync, retry/backoff)
+store.svelte.ts       (WorkoutStore: reactive data + localStorage + account flows)
+    └── sync.svelte.ts          (SyncManager: HTTP sync, retry/backoff, offline)
 
+lib/api.ts            (API client — no store dependency)
 lib/share.ts          (share endpoint client — no store dependency)
 lib/utils.ts          (pure functions — no store dependency)
 lib/types.ts          (interfaces only — no logic)
 lib/toasts.svelte.ts  (tiny global state for toast messages)
 ```
 
-**The store is a singleton** (`export const store = new WorkoutStore()`). All components import it directly — there are no props passed between tabs and the page shell.
+**The store is a singleton** (`export const store = new WorkoutStore()`). All components import it directly — there are no props passed between tabs and the page shell. The exceptions are generic widgets: `QrScanOverlay` (`onscan`/`onclose`) and `Modal`.
+
+### Overlays
+
+The About sheet and the login forms open over the app instead of being pages. Which one is open lives in SvelteKit shallow-routing state (`page.state.overlay`), not in a store, so the browser's back button — Android's back gesture — closes it. Use the helpers in `ui.svelte.ts`:
+
+- `openOverlay(name)` pushes a history entry; `closeOverlay()` goes back.
+- `switchOverlay(name)` replaces it (log in ↔ register), so back still returns to the app.
+- `/about`, `/login`, `/register`, `/forgot-password` are real URLs (`[overlay=overlay]` route) that open the app with that overlay — the email pages link to `/login`.
+
+`Modal.svelte` is deliberately **not** a native `showModal()` `<dialog>`: that makes the whole page inert and sits in the browser's top layer, which buries the popups password managers inject (Dashlane's password generator, autofill menus). It's a plain fixed layer (`z-index` 50, under toasts at 100 and the QR scanner at 200); while an overlay is open, `+page.svelte` makes only the app's `<main>` inert, and `Modal` handles Escape and focus itself.
 
 ---
 
@@ -88,7 +122,8 @@ Exercise        id, name, schemaId?, description?, colorOverride?, targetSets?,
 WorkoutEntry    id, exerciseId, date (YYYY-MM-DD), sets?, restSeconds?,
                 updatedAt, deletedAt
 Settings        yellowAfterDays, redAfterDays, theme, activeSchemaId, updatedAt
-SyncConfig      serverUrl, guid, secret, lastSyncedAt
+Account         guid, username, email, emailVerified
+SyncConfig      account | legacy {guid, secret}, sessionExpired, lastSyncedAt
 ```
 
 ### Schemas
@@ -122,44 +157,90 @@ All mutations set `updatedAt` to `new Date().toISOString()` so the delta-sync al
 
 ## Persistence
 
-**Main data** — `{appDataDir}/theprocesstracker.json`
+Everything lives in the browser's `localStorage`:
 
-Written via `@tauri-apps/plugin-fs`. The file contains `{ exercises, entries, settings }`. It is rewritten in full on every save (no partial updates).
+- **`theprocesstracker`** — `{ exercises, entries, settings, schemas }`, rewritten in full on every save.
+- **`theprocesstracker-sync-config`** — the `SyncConfig`: who this device syncs as, and `lastSyncedAt`. It never holds a password or session token — the session is an HttpOnly cookie. Only the legacy `guid.secret` token (old accounts not yet upgraded) is stored here.
 
-**Sync credentials** — `{appDataDir}/config.json`
+After login, `navigator.storage.persist()` asks the browser not to evict the data.
 
-Written via the Tauri `write_secret_file` Rust command, which sets Unix permissions to `0o600` (owner read/write only) before writing. This command exists solely for the permission restriction — regular file write does not enforce this.
+### Who the local data belongs to
+
+Local data belongs to whoever `syncConfig` names (account or legacy GUID), or to nobody when there's no config:
+
+- **Logout** syncs first, then **clears the device** (data + config). If changes can't be synced (offline, expired session), the UI warns before `store.logout(force = true)` throws them away.
+- **Expired session** (sync or `/auth/me` gets 401): `sessionExpired` is set and the data is **kept**; the header shows "Log in again". Logging in as the same account resumes; as another account, the device is cleared first.
+- **Login with anonymous or legacy-owned data on the device**: the login page asks whether to add it to the account (`store.localDataPlanFor(account)` → `'ask'`). If yes and it was legacy-owned, the old account is also merged server-side.
+- **Register**: whatever is on the device goes into the new account.
+
+---
+
+## Offline & PWA
+
+`src/service-worker.ts` precaches the whole build (`$service-worker`'s `build` + `files`) plus the `/` shell at install. Navigations are answered with the cached shell, so every route opens offline; other same-origin GETs are cache-first. API requests (another origin) are never intercepted. Each build has its own cache, deleted on activation.
+
+Updates: the layout registers the worker by hand (`kit.serviceWorker.register = false`, skipped in dev). A newly installed worker waits; the app shows a "new version — Reload" toast, and only on that click does the worker `skipWaiting()` and the page reload. The frontend nginx config serves `index.html`, `service-worker.js` and the manifest with `no-cache`, or browsers would never see an update.
+
+`ui.installPrompt` holds Chrome's `beforeinstallprompt` event so the About sheet can offer "Install app".
 
 ---
 
 ## Sync
 
-The sync system lives entirely in `src/lib/sync.svelte.ts`.
+The sync system lives in `src/lib/sync.svelte.ts`.
 
-**Protocol**: POST `/api/v1/sync` with a Bearer token (`guid.secret`). The body sends only records with `updatedAt > lastSyncedAt` (delta sync), under `changes.exercises`, `changes.entries`, `changes.schemas` and `changes.settings`. The server returns its own set of changes since the same timestamp. Conflicts resolve by `updatedAt` — most recently modified record wins.
+**Protocol**: POST `/api/v1/sync`, authenticated by the session cookie (`credentials: 'include'`) — or, for a device still on an old anonymous account, a Bearer token (`guid.secret`). The body sends only records with `updatedAt > lastSyncedAt` (delta sync), under `changes.exercises`, `changes.entries`, `changes.schemas` and `changes.settings`. The server returns its own set of changes since the same timestamp. Conflicts resolve by `updatedAt` — most recently modified record wins.
 
-`changes.schemas` is a per-record collection just like exercises and entries. A
-server that ignores the key degrades gracefully: schemas still work locally,
-they just don't propagate between devices.
+**`SyncManager`** holds `syncConfig` and `syncStatus` (`'idle'|'syncing'|'error'|'offline'`) as `$state`. It receives a `SyncDataRef` interface from `WorkoutStore` (a reference to `this`), giving it read/write access to the reactive `exercises`, `entries`, `settings` arrays plus a `saveData()` callback. `syncToServer()` resolves to whether the sync succeeded; calls made during a sync share one follow-up round.
 
-**`SyncManager`** holds `syncConfig` and `syncStatus` as `$state`. It receives a `SyncDataRef` interface from `WorkoutStore` (a reference to `this`), giving it read/write access to the reactive `exercises`, `entries`, `settings` arrays plus a `saveData()` callback.
+**Offline**: when `navigator.onLine` is false no request is made and the status is `'offline'` (no error toast, no retry). The `online` event triggers a sync.
 
-**Retry behaviour**: On failure, schedules a retry in 5 minutes, up to 5 attempts. Manual sync (clicking the cloud icon) resets the counter and fires immediately.
+**Retry behaviour**: On failure, schedules a retry in 5 minutes, up to 5 attempts. Manual sync (clicking the cloud icon) resets the counter and fires immediately. Periodic sync runs every 10 minutes while the page is visible.
 
 **Debounce**: Local changes trigger `debouncedSync()`, which waits 1500 ms before actually sending — preventing a flood of requests while a user is typing.
 
-**Account linking** performs a test sync request to validate credentials before saving, so bad credentials are caught immediately.
+---
+
+## Accounts
+
+Username + password, optional recovery email. Implemented server-side in `theprocesstracker-server` (`Accounts`, `Sessions`, `AccountHandler`); the client is `src/lib/api.ts` plus the flows in `store.svelte.ts`.
+
+| Endpoint | |
+|---|---|
+| `POST /api/v1/auth/register` | `{username, password, email?, legacy?: {guid, secret}}` — `legacy` upgrades that old account in place |
+| `POST /api/v1/auth/login` / `logout`, `GET /api/v1/auth/me` | session cookie in/out |
+| `POST /api/v1/auth/link` → `{token, expiresIn}` / `POST /api/v1/auth/link/redeem` `{token}` | QR login: a logged-in device mints a single-use 5-minute code; redeeming it starts a session |
+| `POST /api/v1/auth/password-reset/request` / `confirm` | email link → `/reset-password?token=` |
+| `POST /api/v1/account/email` (+ `/resend`, `/verify`) | set/remove recovery email; link → `/verify-email?token=` |
+| `POST /api/v1/account/password` | logs other devices out |
+| `POST /api/v1/account/merge-legacy` | fold an old anonymous account into the logged-in one |
+| `DELETE /api/v1/account` | session: needs `{password}` |
+
+- **Session**: HttpOnly, `SameSite=Lax` cookie set by the API host; 90 days, sliding. The app (`theprocesstracker.com`) and API (`api.`) are the same site, so the cookie is sent on the app's fetches. The server only allows credentials for origins in `APP_ORIGINS`, and refuses the session to requests with any other `Origin`.
+- **Usernames** are lowercase, 3–32 of `a-z 0-9 . _ -`. Passwords: 8+ characters.
+- **QR login**: Settings → "Log in on another device" shows a QR code holding `<app>/link#<code>`. A phone camera opens the link (the `/link` route sets `ui.pendingLoginLink`, the login form redeems it); the login modal's "Scan a QR code" does the same in-app. The code rides in the URL fragment so it never reaches a server log. A device that's already logged in refuses to redeem one — it would silently swap the session's account.
+- **Recovery email** is optional and must be confirmed; only confirmed addresses can receive reset links. No email → a forgotten password can't be recovered (by design).
+- Account error messages from the server (`{error}` on 4xx) are written for people and shown as-is. Wrong passwords on logged-in requests are **403**; **401** always means "not logged in / session expired".
+
+### Old anonymous (GUID) accounts
+
+Old app versions keep working unchanged — the server still accepts `Bearer guid.secret` and `/api/v1/account/create`. An account *is* still a GUID folder on the server, which makes migration cheap:
+
+- **Upgrade in place** — register with `legacy` (this device's old token, or one scanned from the old app's "Link another device" QR): username and password are added to that GUID's folder. Data doesn't move; old-app devices keep syncing with their token.
+- **Merge** — a logged-in user imports an old account (Settings → Import from old app, or "add them to my account" at login). The server merges its data (last write wins) and turns the old GUID into an alias, so its token now syncs into the account. Merged records keep their timestamps, so the server sets `resyncBefore`: any client whose `lastSyncedAt` predates the merge gets one full sync.
+- A device holding a pre-account config (`{serverUrl, guid, secret}`) is migrated on load to `{ legacy: {guid, secret} }` and keeps syncing until the user upgrades.
 
 ---
 
 ## Schema sharing
 
 Users share a schema by uploading a snapshot of it and handing over a short
-code; the recipient scans a QR code (or pastes the code) to import it. The
-client lives in `src/lib/share.ts`; the UI is `SchemaBar.svelte`, which reuses
-the same QR generation and scanning approach as account linking in
-`SettingsTab.svelte` (`qrcode` to render, the Tauri barcode-scanner plugin on
-Android, `qr-scanner` webcam fallback on desktop).
+code; the recipient opens the link (`theprocesstracker.com/s/<code>`), scans
+the QR code — which holds that link, so any phone camera opens it — or pastes
+the code into Import. The client lives in `src/lib/share.ts`; the UI is
+`SchemaBar.svelte` (`qrcode` to render, `QrScanOverlay` for in-app webcam
+scanning). The `/s/[code]` route sets `ui.pendingShareCode` and redirects to the
+app, which opens the import preview.
 
 **What travels**: `SharedSchemaPayload` — the schema name plus each exercise's
 name, description, targets and color override. Deliberately **no ids, no
@@ -172,10 +253,6 @@ checks the shape field by field and trims/caps every string and number before
 any of it reaches the store. Never feed a payload to `store.importSchema`
 without it.
 
-**Server side**: the two share endpoints do not exist yet, and `changes.schemas`
-needs handling in the sync endpoint. Until then the app degrades gracefully —
-schemas work locally, and pressing Share shows an error instead of a code.
-
 ---
 
 ## WorkoutStore public API
@@ -187,7 +264,10 @@ store.entries            WorkoutEntry[]
 store.schemas            WorkoutSchema[]
 store.settings           Settings
 store.syncConfig         SyncConfig | null   (delegated from SyncManager)
-store.syncStatus         'idle'|'syncing'|'error'  (delegated)
+store.syncStatus         'idle'|'syncing'|'error'|'offline'  (delegated)
+store.account            Account | null
+store.legacyCredentials  { guid, secret } | null  (old anonymous account, not yet upgraded)
+store.sessionExpired     boolean
 store.ready              boolean
 store.activeTimers       Record<exerciseId, { phase: 'exercise'|'rest'; startedAt }>
                          (ephemeral — never persisted or synced)
@@ -228,11 +308,19 @@ store.importSchema(payload)       → { schemaId, count }  (fresh ids, becomes a
 store.startPhase(exerciseId, 'exercise' | 'rest')
 store.clearTimer(exerciseId)
 
-// Sync
-store.manualSync()
-store.createAccount(serverUrl)    async, throws on error
-store.linkAccount(serverUrl, guid, secret)  async, throws on error
-store.unlinkAccount()
+// Sync & accounts (async ones throw Error with a message fit to show)
+store.manualSync()                → Promise<boolean>
+store.hasLocalData                boolean (any live exercise or entry)
+store.localDataPlanFor(account)   'resume' | 'ask' | 'replace'
+store.completeLogin(account, keepLocal)   after api.login()
+store.register(username, password, email | null, legacy | null)
+store.logout(force?)              → false (and stays logged in) if unsynced changes can't be synced
+store.disconnectLegacy()          stop syncing an old token; keeps data
+store.deleteAccount(password)     keeps local data, without an account
+store.importLegacyAccount({ guid, secret })   merge an old account, then full sync
+store.changePassword(current, next)
+store.setEmail(email | null, password)
+store.refreshAccount()            re-read /auth/me; 401 → sessionExpired
 ```
 
 ---
@@ -255,7 +343,9 @@ urgencyColor(lastDate, yellow, red) → HSL string (green → yellow → red)
 
 ## CSS strategy
 
-Global design tokens (CSS variables, base `button`/`input` styles, shared utility classes like `.btn-icon`, `.btn-ghost`, `.btn-danger`) are defined as `:global()` rules in `+page.svelte`. This makes them available to all child components without duplication.
+Global design tokens (CSS variables, base `button`/`input` styles, shared utility classes like `.btn-icon`, `.btn-ghost`, `.btn-danger`, `.btn-outline`) are defined as `:global()` rules in the root `+layout.svelte`. This makes them available to every route and component without duplication. The form styles shared by the login modal and the `(auth)` pages live there too, under `.auth-card`.
+
+The About sheet follows the landing site's look (theprocesstracker.com): Iceland brand type, alternating `--bg` / `--bg-alt` bands, cards with `--shadow-card`.
 
 Component-specific layout and structural styles are scoped inside each component's `<style>` block (Svelte's default behaviour).
 
@@ -266,21 +356,20 @@ Brand palette variables (`--color-primary`, `--color-secondary`, `--color-accent
 ## Development
 
 ```bash
-npm run dev          # Tauri dev mode (opens native window, hot reload)
-npm run dev:web      # Vite only (browser at localhost:1420, no Tauri APIs)
+npm run dev          # Vite dev server at localhost:1420 (no service worker)
 npm run check        # svelte-check TypeScript type checking
-npm run build        # Production build
-npm run build:linux  # Linux .deb bundle
-npm run build:android
+npm run build        # Production build → build/ (static files, served by docker/nginx.conf)
+npm run preview      # Serve the production build, service worker included
+npm run icons        # Regenerate static/icons from icon.png / icon-android.png
 ```
 
-Use `dev:web` for pure UI work — it's faster. Use `dev` when testing file I/O, sync credentials, or anything that touches Tauri APIs.
+The API defaults to `https://api.theprocesstracker.com`. For a local server, set `VITE_API_URL` (e.g. `VITE_API_URL=http://localhost:8080 npm run dev`) and add the app's origin to the server's `APP_ORIGINS`. Use `localhost` for both, not `127.0.0.1` — the session cookie needs the app and API on the same site.
 
 ---
 
 ## Conventions
 
-- **No component props** — components import `store` directly. The store is the single source of truth.
+- **No component props** — components import `store` directly. The store is the single source of truth. (Generic widgets like `QrScanOverlay` are the exception.)
 - **Soft delete only** — never remove records from arrays; set `deletedAt`.
 - **Always set `updatedAt`** when mutating a record, so delta sync works correctly.
 - **Duplicate prevention** — `logEntry` silently no-ops if an entry for that exercise+date already exists.
@@ -291,10 +380,7 @@ Use `dev:web` for pure UI work — it's faster. Use `dev` when testing file I/O,
 
 ## Version bumping
 
-When bumping the version, update it in all three of these files:
+When bumping the version, update it in:
 
-- `package.json` — `"version"` field
-- `src-tauri/tauri.conf.json` — `"version"` field
-- `src-tauri/Cargo.toml` — `version` field under `[package]`
-- `src-tauri/Cargo.lock` — `version` under the `theprocesstracker` package
+- `package.json` — `"version"` field (shown in About, sent as `clientVersion` on sync)
 - `package-lock.json` — both `version` fields (`npm install --package-lock-only`)

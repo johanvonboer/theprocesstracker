@@ -1,11 +1,12 @@
-import type { Exercise, WorkoutEntry, Settings, SyncConfig, WorkoutSchema, SharedSchemaPayload } from './types';
+import type { Exercise, WorkoutEntry, Settings, SyncConfig, WorkoutSchema, SharedSchemaPayload, Account, LegacyCredentials } from './types';
 import { DEFAULT_SETTINGS } from './types';
-import { SyncManager, loadSyncConfig } from './sync.svelte';
+import { SyncManager, loadSyncConfig, type SyncStatus } from './sync.svelte';
 import { urgencyScore } from './utils';
-import { IS_TAURI } from './platform';
+import { showToast } from './toasts.svelte';
+import * as api from './api';
 
 const EPOCH = new Date(0).toISOString();
-const WEB_STORAGE_KEY = 'theprocesstracker';
+const STORAGE_KEY = 'theprocesstracker';
 
 /**
  * Id of the schema the migration creates for pre-schema data. Deliberately a
@@ -81,67 +82,28 @@ function normalizeData(d: any): StoredData {
   return { exercises, entries, settings, schemas };
 }
 
-async function writeData(exercises: Exercise[], entries: WorkoutEntry[], settings: Settings, schemas: WorkoutSchema[]) {
-  const payload = { exercises, entries, settings, schemas };
-  if (IS_TAURI) {
-    const { mkdir, writeTextFile } = await import('@tauri-apps/plugin-fs');
-    const { appDataDir, join } = await import('@tauri-apps/api/path');
-    const dir = await appDataDir();
-    await mkdir(dir, { recursive: true });
-    await writeTextFile(await join(dir, 'theprocesstracker.json'), JSON.stringify(payload, null, 2));
-  } else {
-    localStorage.setItem(WEB_STORAGE_KEY, JSON.stringify(payload));
+function writeData(data: StoredData) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch {
+    showToast("Couldn't save — the browser's storage for this site is full or blocked.");
   }
 }
 
-async function readData(): Promise<StoredData> {
-  if (!IS_TAURI) {
-    try {
-      const raw = localStorage.getItem(WEB_STORAGE_KEY);
-      if (raw) return normalizeData(JSON.parse(raw));
-    } catch {}
-    return normalizeData({});
-  }
-
-  const { exists, readTextFile, writeTextFile, mkdir } = await import('@tauri-apps/plugin-fs');
-  const { appDataDir, join, dirname } = await import('@tauri-apps/api/path');
-  const dir = await appDataDir();
-  await mkdir(dir, { recursive: true });
-  const mainPath = await join(dir, 'theprocesstracker.json');
-
-  // Read from primary location
-  if (await exists(mainPath)) {
-    try {
-      const raw = await readTextFile(mainPath);
-      const data = normalizeData(JSON.parse(raw));
-      if (data.exercises.length > 0 || data.entries.length > 0) {
-        // Back up on every startup so the previous session is always recoverable
-        try { await writeTextFile(await join(dir, 'theprocesstracker.json.bak'), raw); } catch {}
-        return data;
-      }
-    } catch {}
-  }
-
-  // Primary location is empty or missing — check known legacy locations.
-  // $DATA is the parent of $APPDATA (e.g. ~/.local/share/ on Linux), so
-  // dirname(appDataDir()) gives us the sibling directory of the old identifier.
-  const legacyIdentifiers = ['theprocesstracker'];
-  const parentDir = await dirname(dir);
-  for (const id of legacyIdentifiers) {
-    try {
-      const legacyPath = await join(parentDir, id, 'theprocesstracker.json');
-      if (!await exists(legacyPath)) continue;
-      const raw = await readTextFile(legacyPath);
-      const data = normalizeData(JSON.parse(raw));
-      if (data.exercises.length === 0 && data.entries.length === 0) continue;
-      // Migrate to primary location and create startup backup
-      await writeTextFile(mainPath, raw);
-      try { await writeTextFile(await join(dir, 'theprocesstracker.json.bak'), raw); } catch {}
-      return data;
-    } catch {}
-  }
-
+function readData(): StoredData {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return normalizeData(JSON.parse(raw));
+  } catch {}
   return normalizeData({});
+}
+
+/**
+ * Asks the browser not to evict our storage under pressure. Done once there is
+ * an account worth protecting, since Firefox shows a prompt for it.
+ */
+function requestPersistentStorage() {
+  navigator.storage?.persist?.().catch(() => {});
 }
 
 class WorkoutStore {
@@ -159,28 +121,34 @@ class WorkoutStore {
 
   constructor() {
     this.sync = new SyncManager(this);
-    Promise.all([readData(), loadSyncConfig()]).then(([d, syncConfig]) => {
-      this.exercises = d.exercises;
-      this.entries = d.entries;
-      this.schemas = d.schemas;
-      this.settings = d.settings;
-      this.sync.syncConfig = syncConfig;
-      this.ready = true;
-      if (syncConfig) {
+    this.applyData(readData());
+    this.sync.setConfig(loadSyncConfig());
+    this.ready = true;
+    if (this.sync.canSync) {
+      this.sync.syncToServer();
+      if (this.account) this.refreshAccount();
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && this.sync.canSync) {
         this.sync.syncToServer();
-        this.sync.startPeriodicSync();
       }
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && this.sync.syncConfig) {
-          this.sync.syncToServer();
-        }
-      });
     });
+  }
+
+  private applyData(d: StoredData) {
+    this.exercises = d.exercises;
+    this.entries = d.entries;
+    this.schemas = d.schemas;
+    this.settings = d.settings;
+    this.activeTimers = {};
   }
 
   // Delegated sync state (read by the UI via store.syncConfig / store.syncStatus)
   get syncConfig(): SyncConfig | null { return this.sync.syncConfig; }
-  get syncStatus(): 'idle' | 'syncing' | 'error' { return this.sync.syncStatus; }
+  get syncStatus(): SyncStatus { return this.sync.syncStatus; }
+  get account(): Account | null { return this.sync.syncConfig?.account ?? null; }
+  get legacyCredentials(): LegacyCredentials | null { return this.sync.syncConfig?.legacy ?? null; }
+  get sessionExpired(): boolean { return !!this.sync.syncConfig?.sessionExpired; }
 
   get liveSchemas(): WorkoutSchema[] {
     return this.schemas.filter(s => !s.deletedAt);
@@ -262,7 +230,12 @@ class WorkoutStore {
 
   // Called by SyncManager after merging a server response
   saveData() {
-    writeData(this.exercises, this.entries, this.settings, this.schemas);
+    writeData($state.snapshot({
+      exercises: this.exercises,
+      entries: this.entries,
+      settings: this.settings,
+      schemas: this.schemas,
+    }));
   }
 
   private save() {
@@ -270,12 +243,133 @@ class WorkoutStore {
     this.sync.debouncedSync();
   }
 
-  // Sync operations — delegated to SyncManager
-  manualSync() { this.sync.manualSync(); }
-  createAccount(serverUrl: string) { return this.sync.createAccount(serverUrl); }
-  linkAccount(serverUrl: string, guid: string, secret: string) { return this.sync.linkAccount(serverUrl, guid, secret); }
-  unlinkAccount() { return this.sync.unlinkAccount(); }
-  deleteAccount() { return this.sync.deleteAccount(); }
+  // ── Sync & accounts ────────────────────────────────────────────
+
+  manualSync() { return this.sync.manualSync(); }
+
+  /** Whether this device holds any exercises or logged workouts. */
+  get hasLocalData(): boolean {
+    return this.exercises.some(e => !e.deletedAt) || this.entries.some(e => !e.deletedAt);
+  }
+
+  /**
+   * What logging in as `account` means for the data already on this device:
+   * - 'resume'  it already belongs to this account (logging in again after expiry)
+   * - 'ask'     anonymous or old-sync-account data the user may want to keep
+   * - 'replace' nothing worth keeping, or another account's data
+   */
+  localDataPlanFor(account: Account): 'resume' | 'ask' | 'replace' {
+    const c = this.syncConfig;
+    if (c?.account?.guid === account.guid) return 'resume';
+    if (c?.account) return 'replace';
+    return this.hasLocalData ? 'ask' : 'replace';
+  }
+
+  /**
+   * Second half of logging in, once the server has accepted the password.
+   * `keepLocal` adds this device's data to the account (only consulted when
+   * localDataPlanFor said 'ask'); otherwise the device is cleared and filled
+   * from the account.
+   */
+  async completeLogin(account: Account, keepLocal: boolean) {
+    const c = this.syncConfig;
+    const plan = this.localDataPlanFor(account);
+    if (plan === 'resume') {
+      this.sync.setConfig({ ...$state.snapshot(c!), account, sessionExpired: false });
+    } else {
+      if (plan === 'ask' && keepLocal && c?.legacy) {
+        // Bring the old sync account's server copy along too. Old-app devices
+        // still using its token then sync straight into this account.
+        try {
+          await api.mergeLegacy(c.legacy);
+        } catch (e: unknown) {
+          showToast(`Couldn't merge your old sync account: ${e instanceof Error ? e.message : e}`);
+        }
+      }
+      if (plan === 'replace' || !keepLocal) this.clearLocalData();
+      this.sync.setConfig({ account, legacy: null, sessionExpired: false, lastSyncedAt: null });
+    }
+    requestPersistentStorage();
+    await this.sync.syncToServer();
+  }
+
+  /**
+   * Creates an account; the data on this device goes into it. `legacy` — this
+   * device's old sync token, or one scanned from the old app — is upgraded in
+   * place, so its server data and any old-app devices using it carry on.
+   */
+  async register(username: string, password: string, email: string | null, legacy: LegacyCredentials | null) {
+    const account = await api.register({ username, password, email, legacy });
+    // Data left behind by someone else's expired login isn't ours to keep.
+    if (this.syncConfig?.account) this.clearLocalData();
+    this.sync.setConfig({ account, legacy: null, sessionExpired: false, lastSyncedAt: null });
+    requestPersistentStorage();
+    await this.sync.syncToServer();
+  }
+
+  /**
+   * Logs out and clears this device. When there are changes the server hasn't
+   * received and they can't be synced right now, returns false without logging
+   * out unless `force` is set.
+   */
+  async logout(force = false): Promise<boolean> {
+    if (!force && this.sync.hasUnsyncedChanges) {
+      if (!this.sync.canSync || !(await this.sync.manualSync())) return false;
+    }
+    try { await api.logout(); } catch {}
+    this.sync.setConfig(null);
+    this.clearLocalData();
+    return true;
+  }
+
+  /** Stops an old-style sync token from syncing this device. Local data is kept. */
+  disconnectLegacy() {
+    this.sync.setConfig(null);
+  }
+
+  /** Deletes the account on the server. This device keeps its data, without an account. */
+  async deleteAccount(password: string) {
+    await api.deleteAccount(password);
+    this.sync.setConfig(null);
+  }
+
+  /** Merges an old GUID account (e.g. scanned from the old app) into the logged-in account. */
+  async importLegacyAccount(legacy: LegacyCredentials) {
+    await api.mergeLegacy(legacy);
+    // The merged records can be older than our last sync; fetch everything.
+    this.sync.syncConfig!.lastSyncedAt = null;
+    this.sync.persistConfig();
+    await this.sync.manualSync();
+  }
+
+  changePassword(currentPassword: string, newPassword: string) {
+    return api.changePassword(currentPassword, newPassword);
+  }
+
+  async setEmail(email: string | null, password: string) {
+    this.updateAccount(await api.setEmail(email, password));
+  }
+
+  /** Re-reads the account (e.g. after the email was verified elsewhere). */
+  async refreshAccount() {
+    try {
+      this.updateAccount(await api.fetchAccount());
+    } catch (e: unknown) {
+      if (e instanceof api.ApiError && e.status === 401) this.sync.markSessionExpired();
+    }
+  }
+
+  private updateAccount(account: Account) {
+    const c = this.sync.syncConfig;
+    if (!c?.account || c.account.guid !== account.guid) return;
+    c.account = account;
+    this.sync.persistConfig();
+  }
+
+  private clearLocalData() {
+    this.applyData(normalizeData({}));
+    this.saveData();
+  }
 
   // Schema operations
   addSchema(name: string): string {

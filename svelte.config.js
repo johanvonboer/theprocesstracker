@@ -1,7 +1,6 @@
-// Tauri doesn't have a Node.js server to do proper SSR
-// so we use adapter-static with a fallback to index.html to put the site in SPA mode
+// The app is a pure SPA: adapter-static with an index.html fallback, so every
+// route (/login, /s/<code>, …) is rendered client-side.
 // See: https://svelte.dev/docs/kit/single-page-apps
-// See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
 import adapter from "@sveltejs/adapter-static";
 import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
@@ -12,6 +11,16 @@ const config = {
     adapter: adapter({
       fallback: "index.html",
     }),
+    // The fallback page is served for nested routes like /s/<code>, so its
+    // asset URLs must be absolute — relative ones would resolve under /s/.
+    paths: {
+      relative: false,
+    },
+    // Registered by hand in +layout.svelte so the app can offer an
+    // "update available" prompt, and so dev mode runs without one.
+    serviceWorker: {
+      register: false,
+    },
   },
 };
 

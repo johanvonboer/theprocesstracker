@@ -52,10 +52,35 @@ export const DEFAULT_SETTINGS: Settings = {
   updatedAt: new Date(0).toISOString(),
 };
 
-export interface SyncConfig {
-  serverUrl: string;
+/** A username/password account. The credential itself lives in an HttpOnly cookie. */
+export interface Account {
+  /** Server-side id; also the id of the data folder the account syncs into. */
+  guid: string;
+  username: string;
+  /** Optional, used only for password recovery. */
+  email: string | null;
+  emailVerified: boolean;
+}
+
+/** Anonymous pre-account sync credentials ("guid.secret" bearer token). */
+export interface LegacyCredentials {
   guid: string;
   secret: string;
+}
+
+/**
+ * Who this device syncs as. At most one of `account` / `legacy` is set: a
+ * legacy credential is dropped as soon as it is upgraded or merged into an
+ * account.
+ */
+export interface SyncConfig {
+  account: Account | null;
+  legacy: LegacyCredentials | null;
+  /**
+   * The server rejected the session. Local data is kept (it still belongs to
+   * `account`) until that user logs in again or someone else does.
+   */
+  sessionExpired: boolean;
   lastSyncedAt: string | null;
 }
 
