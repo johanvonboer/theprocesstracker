@@ -167,7 +167,7 @@
       <li
         class="priority-card"
         class:active={!!timer}
-        style="border-left-color: {urgencyColor(lastDate, exercise.colorOverride?.yellowAfterDays ?? store.settings.yellowAfterDays, exercise.colorOverride?.redAfterDays ?? store.settings.redAfterDays)}"
+        style="--urgency: {urgencyColor(lastDate, exercise.colorOverride?.yellowAfterDays ?? store.settings.yellowAfterDays, exercise.colorOverride?.redAfterDays ?? store.settings.redAfterDays)}"
         animate:translateFlip={{ duration: 650, easing: expoInOut }}
       >
         <div class="card-body">
@@ -252,9 +252,9 @@
     display: flex;
     align-items: stretch;
     background: var(--card-bg);
-    border-left: 5px solid transparent;
+    border-left: 5px solid color-mix(in oklab, var(--urgency) var(--urgency-strength), #e8e0d6);
     border-radius: 12px;
-    box-shadow: 0 1px 2px rgba(44, 57, 71, 0.1), 0 6px 16px rgba(44, 57, 71, 0.07);
+    box-shadow: 0 0 0 1px var(--card-ring), 0 1px 2px rgba(44, 57, 71, 0.1), 0 6px 16px rgba(44, 57, 71, 0.07);
     padding: 0;
     transition: margin-bottom 200ms ease, box-shadow 200ms ease;
   }
@@ -263,7 +263,7 @@
      slightly, and pushed away from the cards below. */
   .priority-card.active {
     margin-bottom: 0.7rem;
-    box-shadow: 0 1px 2px rgba(44, 57, 71, 0.12), 0 8px 22px rgba(44, 57, 71, 0.12);
+    box-shadow: 0 0 0 1px var(--card-ring-active), 0 1px 2px rgba(44, 57, 71, 0.12), 0 8px 22px rgba(44, 57, 71, 0.12);
   }
 
   .card-body {
@@ -309,7 +309,7 @@
     border: none;
     border-left: 1px solid var(--card-border);
     border-radius: 0;
-    background: none;
+    background: var(--segment-bg);
     color: inherit;
     font-size: 0.85rem;
     line-height: 1;
@@ -317,21 +317,21 @@
     min-width: 9rem;
   }
 
-  .btn-set:hover { background: rgba(128, 128, 128, 0.1); }
+  .btn-set:hover { background: var(--segment-hover); }
 
   .btn-set.phase-exercise {
-    background: #059669;
-    color: #fff;
+    background: var(--phase-exercise-bg);
+    color: var(--phase-exercise-text);
     border-left-color: transparent;
   }
-  .btn-set.phase-exercise:hover { background: #047857; }
+  .btn-set.phase-exercise:hover { background: var(--phase-exercise-hover); }
 
   .btn-set.phase-rest {
-    background: #2563eb;
-    color: #fff;
+    background: var(--phase-rest-bg);
+    color: var(--phase-rest-text);
     border-left-color: transparent;
   }
-  .btn-set.phase-rest:hover { background: #1d4ed8; }
+  .btn-set.phase-rest:hover { background: var(--phase-rest-hover); }
 
   .timer-set {
     font-size: 0.7rem;
@@ -397,7 +397,10 @@
     padding: 0 0.7rem;
     font-size: 0.7rem;
     line-height: 1;
+    background: var(--split-arrow-bg);
   }
+
+  .btn-log-arrow:hover { background: var(--interactive-hover); }
 
   /* Divider drawn in the button's own text color so it reads on the navy
      (light theme) and on the gold (dark theme) alike. */

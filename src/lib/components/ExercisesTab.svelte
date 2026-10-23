@@ -130,7 +130,7 @@
   <ul class="exercise-list">
     {#each [...store.activeExercises].sort((a, b) => a.name.localeCompare(b.name)) as exercise (exercise.id)}
       {@const entries = store.entriesFor(exercise.id)}
-      <li class="exercise-card" class:exercise-disabled={exercise.disabled} style="border-left-color: {exercise.disabled ? '#6b7280' : '#3b82f6'}">
+      <li class="exercise-card" class:exercise-disabled={exercise.disabled} style="border-left-color: {exercise.disabled ? '#6b7280' : 'var(--exercise-stripe)'}">
         <div class="card-header">
           {#if editingId === exercise.id}
             <input
