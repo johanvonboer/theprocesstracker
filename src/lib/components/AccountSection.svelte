@@ -51,12 +51,18 @@
     }
   }
 
+  // Sending the email can take a few seconds; show it's under way.
+  let resending = $state(false);
+
   async function handleResend() {
+    resending = true;
     try {
       await resendVerification();
       showToast(`Confirmation link sent to ${store.account?.email}.`, { type: 'info' });
     } catch (e) {
       fail(e, "Couldn't send the link.");
+    } finally {
+      resending = false;
     }
   }
 
@@ -147,7 +153,7 @@
             confirmed
           {:else}
             <span class="warn">not confirmed</span>
-            <button class="btn-link" onclick={handleResend}>Resend link</button>
+            <button class="btn-link" onclick={handleResend} disabled={resending}>{resending ? 'Sending…' : 'Resend link'}</button>
           {/if}
         </span>
       {:else}
