@@ -1,17 +1,14 @@
 <script lang="ts">
   import { store } from '$lib/store.svelte';
-  import { parseLegacyCredentials, isLegacyShape, resendVerification } from '$lib/api';
-  import type { LegacyCredentials } from '$lib/types';
+  import { resendVerification } from '$lib/api';
   import { showToast } from '$lib/toasts.svelte';
   import { openOverlay } from '$lib/ui.svelte';
-  import QrScanOverlay from './QrScanOverlay.svelte';
-  import { ScanLine, QrCode } from 'lucide-svelte';
+  import { QrCode } from 'lucide-svelte';
 
   const MIN_PASSWORD = 8;
-  const hasCamera = !!navigator.mediaDevices?.getUserMedia;
 
   /** Which inline form is open — only one at a time. */
-  let open = $state<'email' | 'password' | 'import' | 'delete' | 'disconnect' | null>(null);
+  let open = $state<'email' | 'password' | 'delete' | 'disconnect' | null>(null);
   let busy = $state(false);
 
   function toggle(form: typeof open) {
@@ -80,40 +77,6 @@
     }
   }
 
-  // ── Import an old GUID account ──────────────────────────────────
-  let showScanner = $state(false);
-  let manualGuid = $state('');
-  let manualSecret = $state('');
-
-  async function importLegacy(creds: LegacyCredentials) {
-    busy = true;
-    try {
-      await store.importLegacyAccount(creds);
-      open = null;
-      manualGuid = '';
-      manualSecret = '';
-      showToast('Old sync account merged into your account.', { type: 'info' });
-    } catch (e) {
-      fail(e, "Couldn't merge that account.");
-    } finally {
-      busy = false;
-    }
-  }
-
-  function handleScan(raw: string) {
-    showScanner = false;
-    const creds = parseLegacyCredentials(raw);
-    if (creds) importLegacy(creds);
-    else showToast("That QR code isn't an old app's sync code");
-  }
-
-  function importManual() {
-    const guid = manualGuid.trim().toLowerCase();
-    const secret = manualSecret.trim().toLowerCase();
-    if (isLegacyShape(guid, secret)) importLegacy({ guid, secret });
-    else showToast("That GUID and secret don't look right — check them in the old app");
-  }
-
   // ── Delete ──────────────────────────────────────────────────────
   async function handleDelete() {
     busy = true;
@@ -166,7 +129,6 @@
     <button class="btn-outline" onclick={openEmailForm}>{account.email ? 'Change email' : 'Add recovery email'}</button>
     <button class="btn-outline" onclick={() => toggle('password')}>Change password</button>
     <button class="btn-outline with-icon" onclick={() => openOverlay('link-device')}><QrCode size={15} />Log in on another device</button>
-    <button class="btn-outline" onclick={() => toggle('import')}>Import from old app</button>
     <button class="btn-outline btn-danger" onclick={() => toggle('delete')}>Delete account</button>
   </div>
 
@@ -194,25 +156,6 @@
         </button>
       </div>
     </form>
-  {:else if open === 'import'}
-    <div class="inline-form">
-      <p class="hint">
-        Bring over the data from an anonymous sync account used by the old Android or
-        desktop app. In the old app, open <strong>Settings → Remote sync → Link another device</strong>
-        and scan its QR code. Devices still running the old app then sync into this account.
-      </p>
-      {#if hasCamera}
-        <div class="actions">
-          <button class="scan-btn" onclick={() => showScanner = true} disabled={busy}><ScanLine size={16} />Scan QR code</button>
-        </div>
-      {/if}
-      <p class="hint">Or copy the GUID and secret shown under Remote sync:</p>
-      <input type="text" placeholder="GUID" bind:value={manualGuid} autocapitalize="off" spellcheck="false" />
-      <input type="text" placeholder="Secret" bind:value={manualSecret} autocapitalize="off" spellcheck="false" />
-      <div class="actions">
-        <button class="btn-outline" onclick={importManual} disabled={busy || !manualGuid.trim() || !manualSecret.trim()}>Import</button>
-      </div>
-    </div>
   {:else if open === 'delete'}
     <form class="inline-form" onsubmit={(e) => { e.preventDefault(); handleDelete(); }}>
       <p class="hint">
@@ -257,14 +200,6 @@
   </div>
 {/if}
 
-{#if showScanner}
-  <QrScanOverlay
-    onscan={handleScan}
-    onclose={() => showScanner = false}
-    hint="Scan the QR code from the old app's “Link another device” screen."
-  />
-{/if}
-
 <style>
   h2 { margin: 0 0 0.35rem; font-size: 1.05rem; }
 
@@ -306,7 +241,7 @@
 
   .error { margin: 0; font-size: 0.85rem; color: #ef4444; }
 
-  .scan-btn, .with-icon { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .with-icon { display: inline-flex; align-items: center; gap: 0.4rem; }
 
   .btn-link {
     background: none;

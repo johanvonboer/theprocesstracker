@@ -1,12 +1,6 @@
 import { goto, pushState, replaceState } from '$app/navigation';
 import { page } from '$app/state';
 
-/** Chrome's install-prompt event (not yet in TypeScript's DOM types). */
-export interface BeforeInstallPromptEvent extends Event {
-  prompt(): Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
-
 /**
  * Cross-route UI hand-offs. Ephemeral — never persisted.
  */
@@ -15,16 +9,7 @@ export const ui = $state({
   pendingShareCode: null as string | null,
   /** Set by the /link route (a login QR code opened by a phone camera); the login form redeems it. */
   pendingLoginLink: null as string | null,
-  /** Present when the browser will let us offer "Install app". */
-  installPrompt: null as BeforeInstallPromptEvent | null,
 });
-
-export async function installApp() {
-  const prompt = ui.installPrompt;
-  if (!prompt) return;
-  ui.installPrompt = null; // each event can only be prompted once
-  await prompt.prompt();
-}
 
 // ── Overlays ──────────────────────────────────────────────────────
 // The About sheet and the login forms open over the app. Which one is open

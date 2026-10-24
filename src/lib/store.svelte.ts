@@ -333,15 +333,6 @@ class WorkoutStore {
     this.sync.setConfig(null);
   }
 
-  /** Merges an old GUID account (e.g. scanned from the old app) into the logged-in account. */
-  async importLegacyAccount(legacy: LegacyCredentials) {
-    await api.mergeLegacy(legacy);
-    // The merged records can be older than our last sync; fetch everything.
-    this.sync.syncConfig!.lastSyncedAt = null;
-    this.sync.persistConfig();
-    await this.sync.manualSync();
-  }
-
   changePassword(currentPassword: string, newPassword: string) {
     return api.changePassword(currentPassword, newPassword);
   }

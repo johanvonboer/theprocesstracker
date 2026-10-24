@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
-  import { X } from 'lucide-svelte';
+  import { X, ArrowLeft } from 'lucide-svelte';
 
   // A generic widget, so it takes props. `sheet` fills the screen instead of
-  // being a centered card.
+  // being a centered card, with a sticky Back bar in place of the small X.
   //
   // Deliberately not a native showModal() <dialog>: that makes everything
   // outside it inert and sits in the top layer above any z-index, which buries
@@ -45,7 +45,13 @@
     onclick={(e) => { if (pressedBackdrop && e.target === e.currentTarget) onclose(); }}
   >
     <div class="modal-panel" bind:this={panel} role="dialog" aria-modal="true" aria-label={label} tabindex="-1">
-      <button class="btn-icon btn-ghost modal-close" onclick={onclose} aria-label="Close"><X size={20} /></button>
+      {#if sheet}
+        <div class="sheet-bar">
+          <button class="sheet-back" onclick={onclose}><ArrowLeft size={18} />Back</button>
+        </div>
+      {:else}
+        <button class="btn-icon btn-ghost modal-close" onclick={onclose} aria-label="Close"><X size={20} /></button>
+      {/if}
       {@render children()}
     </div>
   </div>
@@ -92,7 +98,10 @@
 
   .sheet .modal-scroller { padding: 0; }
 
+  /* Not stretched: a stretched flex item is pinned to the scroller's height and
+     taller content spills past its background onto the backdrop. */
   .sheet .modal-panel {
+    align-self: flex-start;
     width: 100%;
     min-height: 100%;
     margin: 0;
@@ -104,7 +113,6 @@
   }
 
   .modal-close { position: absolute; top: 0.75rem; right: 0.75rem; z-index: 2; }
-  .sheet .modal-close { position: fixed; top: 0.6rem; right: 0.75rem; opacity: 0.7; }
 
   @keyframes modal-in {
     from { opacity: 0; transform: translateY(12px); }

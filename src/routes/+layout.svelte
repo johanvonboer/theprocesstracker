@@ -3,7 +3,6 @@
   import { onMount, type Snippet } from 'svelte';
   import { dev } from '$app/environment';
   import { store } from '$lib/store.svelte';
-  import { ui, type BeforeInstallPromptEvent } from '$lib/ui.svelte';
   import { toasts, dismissToast, showToast } from '$lib/toasts.svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -13,14 +12,6 @@
   });
 
   onMount(() => {
-    // Chrome/Android offer installing the PWA through this event; keep it so
-    // the app can show its own "Install app" button.
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      ui.installPrompt = e as BeforeInstallPromptEvent;
-    });
-    window.addEventListener('appinstalled', () => { ui.installPrompt = null; });
-
     if (!dev && 'serviceWorker' in navigator) registerServiceWorker();
   });
 
@@ -121,6 +112,9 @@
     --phase-rest-bg: #2563eb;
     --phase-rest-hover: #1d4ed8;
     --phase-rest-text: #fff;
+    /* Phase color as text on the card (the queue's timer and set status). */
+    --phase-exercise-ink: #047857;
+    --phase-rest-ink: #1d4ed8;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -150,6 +144,8 @@
       --phase-rest-bg: #26343d;
       --phase-rest-hover: #2e3f4a;
       --phase-rest-text: #b9d3e6;
+      --phase-exercise-ink: #f6d5a5;
+      --phase-rest-ink: #b9d3e6;
     }
   }
 
@@ -179,6 +175,8 @@
     --phase-rest-bg: #26343d;
     --phase-rest-hover: #2e3f4a;
     --phase-rest-text: #b9d3e6;
+    --phase-exercise-ink: #f6d5a5;
+    --phase-rest-ink: #b9d3e6;
   }
 
   :global(body) {
@@ -245,6 +243,28 @@
 
   :global(.btn-ghost) { color: inherit; opacity: 0.4; }
   :global(.btn-ghost:hover) { opacity: 0.8; background: rgba(128,128,128,0.1); }
+
+  /* Top bar of a full-screen overlay (About, share, import, QR scan): a clear
+     Back button that stays put while the content scrolls. */
+  :global(.sheet-bar) {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    padding: 0.6rem 1rem;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--card-border);
+  }
+
+  :global(.sheet-back) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 1.1rem 0.55rem 0.8rem;
+    font-weight: 500;
+  }
 
   :global(.delete-confirm) {
     display: flex;

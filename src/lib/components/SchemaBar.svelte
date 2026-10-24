@@ -6,7 +6,7 @@
   import { shareSchema, fetchSharedSchema, parseShareCode } from '$lib/share';
   import QrScanOverlay from './QrScanOverlay.svelte';
   import type { SharedSchemaPayload } from '$lib/types';
-  import { PenLine, Trash2, Share2, ScanLine, Plus, Copy } from 'lucide-svelte';
+  import { PenLine, Trash2, Share2, ScanLine, Plus, Copy, ArrowLeft } from 'lucide-svelte';
 
   // ── Schema selection & editing ────────────────────────────────
   // Switching, creating and importing schemas sit behind "Advanced" — most
@@ -224,7 +224,7 @@
 
 {#if importOpen && !preview}
   <div class="qr-overlay">
-    <button class="qr-back" onclick={cancelImport}>← Back</button>
+    <div class="sheet-bar"><button class="sheet-back" onclick={cancelImport}><ArrowLeft size={18} />Back</button></div>
     <div class="qr-content">
       <h2 class="overlay-title">Import a schema</h2>
       {#if hasCamera}
@@ -245,7 +245,7 @@
 
 {#if preview}
   <div class="qr-overlay">
-    <button class="qr-back" onclick={cancelImport}>← Back</button>
+    <div class="sheet-bar"><button class="sheet-back" onclick={cancelImport}><ArrowLeft size={18} />Back</button></div>
     <div class="qr-content">
       <h2 class="overlay-title">{preview.name}</h2>
       <p class="qr-hint">{preview.exercises.length} exercise{preview.exercises.length === 1 ? '' : 's'}</p>
@@ -273,7 +273,7 @@
 
 {#if share}
   <div class="qr-overlay">
-    <button class="qr-back" onclick={() => share = null}>← Back</button>
+    <div class="sheet-bar"><button class="sheet-back" onclick={() => share = null}><ArrowLeft size={18} />Back</button></div>
     <div class="qr-content">
       <img src={share.qr} alt="Schema sharing QR code" class="qr-image" />
       <p class="qr-hint">Have them scan this with their phone camera, or send them the link or code below.</p>
@@ -385,19 +385,6 @@
     flex-direction: column;
     overflow-y: auto;
   }
-
-  .qr-back {
-    align-self: flex-start;
-    background: none;
-    border: none;
-    padding: 1rem 1.25rem;
-    font-size: 1rem;
-    color: inherit;
-    opacity: 0.7;
-    cursor: pointer;
-  }
-
-  .qr-back:hover { opacity: 1; background: none; }
 
   .qr-content {
     flex: 1;

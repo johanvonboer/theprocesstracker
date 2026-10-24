@@ -3,6 +3,7 @@
   import type { Exercise } from '$lib/types';
   import type { AnimationConfig } from 'svelte/animate';
   import { expoInOut } from 'svelte/easing';
+  import { Play, Pause, Check, EllipsisVertical } from 'lucide-svelte';
 
   function translateFlip(
     _node: Element,
@@ -54,6 +55,13 @@
     return `Set ${currentSet}${target}${reps}`;
   }
 
+  /** "Set 2/3 · 8r · exercising" / "Set 1/3 done · resting" — under the name while a session runs. */
+  function statusLabel(exercise: Exercise, phase: 'exercise' | 'rest', setsDone: number): string {
+    if (phase === 'exercise') return `${setLabel(exercise, setsDone + 1)} · exercising`;
+    const target = exercise.targetSets ? `/${exercise.targetSets}` : '';
+    return `Set ${setsDone}${target} done · resting`;
+  }
+
   /** "3 × 8" — targets shown on the idle button, before any set is underway. */
   function targetHint(exercise: Exercise): string | null {
     if (exercise.targetSets && exercise.targetReps) return `${exercise.targetSets} × ${exercise.targetReps}`;
@@ -67,15 +75,20 @@
   // entry records total rest rather than only the last stretch.
   let restTotals = $state<Record<string, number>>({});
 
+  // One session at a time: while an exercise is being timed, the others can't
+  // be started until it is logged or cancelled.
+  const sessionRunning = $derived(Object.keys(store.activeTimers).length > 0);
+
   /**
    * One button cycles the whole set: idle → exercise → rest → exercise → …
    * A set is counted when an exercise period ends, and rest time is banked when
-   * a rest period ends. "Done" (handleLogDate) closes out whichever phase is
+   * a rest period ends. "Log today" / "Finished" (handleLogDate) closes out whichever phase is
    * still open and clears the timer.
    */
   function handleTimerClick(exerciseId: string) {
     const timer = store.activeTimers[exerciseId];
     if (!timer) {
+      if (sessionRunning) return;
       store.startPhase(exerciseId, 'exercise');
       return;
     }
@@ -163,7 +176,6 @@
       {@const setsToday = localSets[exercise.id] ?? 0}
       {@const timer = store.activeTimers[exercise.id]}
       {@const timerDisplay = getTimerDisplay(exercise.id)}
-      {@const currentSet = setsToday + (timer?.phase === 'exercise' ? 1 : 0)}
       <li
         class="priority-card"
         class:active={!!timer}
@@ -174,31 +186,41 @@
           <div class="priority-rank">{i + 1}</div>
           <div class="priority-info">
             <span class="priority-name">{exercise.name}</span>
-            <span class="priority-last">
-              {#if lastDate}
-                Last done {daysSince(lastDate)} &middot; {fmtDate(lastDate)}
-              {:else}
-                Never done
-              {/if}
-            </span>
+            {#if timer}
+              <span class="priority-status phase-{timer.phase}">{statusLabel(exercise, timer.phase, setsToday)}</span>
+            {:else}
+              <span class="priority-last">
+                {#if lastDate}
+                  Last done {daysSince(lastDate)} &middot; {fmtDate(lastDate)}
+                {:else}
+                  Never done
+                {/if}
+              </span>
+            {/if}
           </div>
+          {#if timer}
+            <span class="timer-elapsed phase-{timer.phase}">{timerDisplay}</span>
+          {/if}
         </div>
         <div class="card-actions">
           <button
             class="btn-set"
             class:phase-exercise={timer?.phase === 'exercise'}
             class:phase-rest={timer?.phase === 'rest'}
+            disabled={!timer && sessionRunning}
+            title={!timer && sessionRunning ? 'Finish or cancel the running exercise first' : undefined}
             onclick={() => handleTimerClick(exercise.id)}
           >
-            {#if timer}
-              <span class="timer-set">{setLabel(exercise, currentSet)}</span>
-              <span class="timer-elapsed">{timer.phase === 'exercise' ? 'Exercise' : 'Rest'} {timerDisplay}</span>
-              <span class="timer-action">{timer.phase === 'exercise' ? 'Stop and rest' : 'Stop and exercise'}</span>
+            {#if timer?.phase === 'exercise'}
+              <Pause size={16} /><span class="set-action">Stop and rest</span>
+            {:else if timer}
+              <Play size={16} /><span class="set-action">Start set {setsToday + 1}</span>
             {:else}
-              {#if targetHint(exercise)}
-                <span class="timer-set">{targetHint(exercise)}</span>
-              {/if}
-              <span class="timer-action idle">Start exercise</span>
+              <Play size={16} />
+              <span class="set-idle">
+                <span class="set-action">Start exercise</span>
+                {#if targetHint(exercise)}<span class="set-hint">{targetHint(exercise)}</span>{/if}
+              </span>
             {/if}
           </button>
           <div class="log-slot">
@@ -206,17 +228,26 @@
               <button class="btn-undo" style="--undo-ms: {UNDO_MS}ms" onclick={() => handleUndoLog(exercise.id)}>Undo</button>
             {/if}
             <div class="split-log" class:invisible={undoPending[exercise.id] !== undefined}>
-              <button class="btn-log-main" onclick={() => handleLogDate(exercise.id, today())}>Done</button>
-              <button class="btn-log-arrow" onclick={(e) => { e.stopPropagation(); openDropdownId = openDropdownId === exercise.id ? null : exercise.id; }}>&#9662;</button>
+              <button class="btn-log-main" onclick={() => handleLogDate(exercise.id, today())}>
+                <Check size={16} /><span>{timer ? 'Finished' : 'Log today'}</span>
+              </button>
+              <button
+                class="btn-log-arrow"
+                aria-label="More options"
+                aria-expanded={openDropdownId === exercise.id}
+                onclick={(e) => { e.stopPropagation(); openDropdownId = openDropdownId === exercise.id ? null : exercise.id; }}
+              ><EllipsisVertical size={18} /></button>
               {#if openDropdownId === exercise.id}
                 <div class="log-dropdown">
-                  <button onclick={() => { handleLogDate(exercise.id, daysAgo(1)); openDropdownId = null; }}>Done yesterday</button>
-                  <button onclick={() => { handleLogDate(exercise.id, daysAgo(2)); openDropdownId = null; }}>Done 2 days ago</button>
-                  <button onclick={() => { handleLogDate(exercise.id, daysAgo(3)); openDropdownId = null; }}>Done 3 days ago</button>
+                  <!-- A running session is happening today, so only offer backdating when idle. -->
                   {#if timer}
                     <button class="cancel-item" onclick={() => { handleCancelSession(exercise.id); openDropdownId = null; }}>
                       Cancel — discard this session
                     </button>
+                  {:else}
+                    <button onclick={() => { handleLogDate(exercise.id, daysAgo(1)); openDropdownId = null; }}>Log yesterday</button>
+                    <button onclick={() => { handleLogDate(exercise.id, daysAgo(2)); openDropdownId = null; }}>Log 2 days ago</button>
+                    <button onclick={() => { handleLogDate(exercise.id, daysAgo(3)); openDropdownId = null; }}>Log 3 days ago</button>
                   {/if}
                 </div>
               {/if}
@@ -294,6 +325,19 @@
   .priority-name { font-weight: 700; font-size: 1rem; }
   .priority-last { font-size: 0.8rem; opacity: 0.5; }
 
+  .priority-status { font-size: 0.8rem; font-weight: 500; }
+
+  .phase-exercise { color: var(--phase-exercise-ink); }
+  .phase-rest { color: var(--phase-rest-ink); }
+
+  .timer-elapsed {
+    flex-shrink: 0;
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
   .card-actions {
     display: flex;
     align-items: stretch;
@@ -302,10 +346,10 @@
 
   .btn-set {
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.2rem;
+    gap: 0.5rem;
+    text-align: left;
     border: none;
     border-left: 1px solid var(--card-border);
     border-radius: 0;
@@ -317,7 +361,7 @@
     min-width: 9rem;
   }
 
-  .btn-set:hover { background: var(--segment-hover); }
+  .btn-set:not(:disabled):hover { background: var(--segment-hover); }
 
   .btn-set.phase-exercise {
     background: var(--phase-exercise-bg);
@@ -333,32 +377,13 @@
   }
   .btn-set.phase-rest:hover { background: var(--phase-rest-hover); }
 
-  .timer-set {
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    opacity: 0.7;
-    white-space: nowrap;
-  }
+  .btn-set :global(svg) { flex-shrink: 0; }
 
-  .timer-elapsed {
-    font-size: 0.95rem;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-  }
+  .set-action { font-size: 0.9rem; font-weight: 500; line-height: 1.2; }
 
-  .timer-action {
-    font-size: 0.72rem;
-    opacity: 0.75;
-    white-space: nowrap;
-  }
+  .set-idle { display: flex; flex-direction: column; gap: 0.15rem; }
 
-  /* Nothing running: the label is the button, so give it full weight. */
-  .timer-action.idle {
-    font-size: 0.85rem;
-    opacity: 1;
-  }
+  .set-hint { font-size: 0.72rem; opacity: 0.6; white-space: nowrap; }
 
   .log-slot {
     position: relative;
@@ -383,19 +408,24 @@
   }
 
   .btn-log-main {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
     border: none;
     border-radius: 0;
     padding: 0 1.15rem;
     font-size: 0.9rem;
     min-width: 5.5rem;
+    white-space: nowrap;
   }
 
   .btn-log-arrow {
     position: relative;
+    display: flex;
+    align-items: center;
     border: none;
     border-radius: 0 12px 12px 0;
-    padding: 0 0.7rem;
-    font-size: 0.7rem;
+    padding: 0 0.6rem;
     line-height: 1;
     background: var(--split-arrow-bg);
   }
@@ -441,10 +471,7 @@
 
   .log-dropdown button:hover { background: var(--interactive-hover); }
 
-  .log-dropdown .cancel-item {
-    border-top: 1px solid rgba(128, 128, 128, 0.3);
-    color: #ef4444;
-  }
+  .log-dropdown .cancel-item { color: #ef4444; }
 
   /* Dropdown items sit on --interactive, which is gold in dark theme — bright
      red would barely read against it. */
@@ -484,11 +511,13 @@
 
   @media (max-width: 480px) {
     .card-body { padding: 0.7rem 0.75rem; gap: 0.6rem; }
-    .btn-set { min-width: 0; padding: 0 0.6rem; font-size: 0.8rem; }
-    .timer-elapsed { font-size: 0.85rem; }
-    .timer-set { font-size: 0.62rem; }
-    .timer-action { font-size: 0.65rem; }
-    .timer-action.idle { font-size: 0.8rem; }
-    .btn-log-main { min-width: 0; padding: 0 0.85rem; font-size: 0.85rem; }
+    /* Narrow: two rows — name, status and timer on top, the buttons in a full
+       row underneath — so neither squeezes the other. */
+    .priority-card { flex-direction: column; }
+    .card-actions { border-top: 1px solid var(--card-border); }
+    .btn-set { flex: 1; min-width: 0; min-height: 2.9rem; padding: 0 0.75rem; border-left: none; border-radius: 0 0 0 7px; }
+    .btn-log-arrow, .btn-undo { border-radius: 0 0 12px 0; }
+    .timer-elapsed { font-size: 1.5rem; }
+    .btn-log-main { min-width: 0; padding: 0 1rem; }
   }
 </style>
