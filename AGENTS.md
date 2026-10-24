@@ -34,8 +34,9 @@ src/
   lib/
     types.ts                 All TypeScript interfaces & DEFAULT_SETTINGS
     toasts.svelte.ts         Global toast notification store
-    ui.svelte.ts             Cross-route UI hand-offs (pending share code, install prompt) + overlays
+    ui.svelte.ts             Cross-route UI hand-offs (pending share code, login link) + overlays
     utils.ts                 Pure date/color helpers (today, fmtDate, etc.)
+    history.ts               History tab's time ranges: day/week/month columns (pure)
     api.ts                   API base URL, fetch helper, account endpoints (pure, no store dep)
     store.svelte.ts          WorkoutStore — data operations, persistence, login/logout flows
     sync.svelte.ts           SyncManager — sync, retry, offline handling, session expiry
@@ -44,9 +45,10 @@ src/
       SchemaBar.svelte       Schema selector + share/import overlays
       ExercisesTab.svelte    "Setup exercises" tab
       WorkoutQueueTab.svelte "Workout queue" tab
+      HistoryTab.svelte      "History" tab (chart of what was done when)
       SettingsTab.svelte     "Settings" tab (account + queue colors)
       AccountSection.svelte  Account management (in Settings)
-      AboutSheet.svelte      Full-screen About: intro, features, privacy, feedback, policy
+      AboutSheet.svelte      Full-screen About: version, feedback, privacy policy
       FeedbackForm.svelte    Feedback form (in About)
       PrivacyPolicy.svelte   Collapsible privacy policy (in About)
       AuthModal.svelte       Login modal; switches between the three forms below
@@ -80,6 +82,7 @@ static/
     │     ├── ExercisesTab.svelte   (local UI state + store calls)
     │     │     └── SchemaBar.svelte  (schema selector, share QR, import scan)
     │     ├── WorkoutQueueTab.svelte
+    │     ├── HistoryTab.svelte
     │     ├── SettingsTab.svelte
     │     │     └── AccountSection.svelte
     │     ├── AboutSheet.svelte     (overlay 'about')
@@ -93,6 +96,7 @@ store.svelte.ts       (WorkoutStore: reactive data + localStorage + account flow
 lib/api.ts            (API client — no store dependency)
 lib/share.ts          (share endpoint client — no store dependency)
 lib/utils.ts          (pure functions — no store dependency)
+lib/history.ts        (pure functions — no store dependency)
 lib/types.ts          (interfaces only — no logic)
 lib/toasts.svelte.ts  (tiny global state for toast messages)
 ```
@@ -181,8 +185,6 @@ Local data belongs to whoever `syncConfig` names (account or legacy GUID), or to
 
 Updates: the layout registers the worker by hand (`kit.serviceWorker.register = false`, skipped in dev). A newly installed worker waits; the app shows a "new version — Reload" toast, and only on that click does the worker `skipWaiting()` and the page reload. The frontend nginx config serves `index.html`, `service-worker.js` and the manifest with `no-cache`, or browsers would never see an update.
 
-`ui.installPrompt` holds Chrome's `beforeinstallprompt` event so the About sheet can offer "Install app".
-
 ---
 
 ## Sync
@@ -227,7 +229,7 @@ Username + password, optional recovery email. Implemented server-side in `thepro
 Old app versions keep working unchanged — the server still accepts `Bearer guid.secret` and `/api/v1/account/create`. An account *is* still a GUID folder on the server, which makes migration cheap:
 
 - **Upgrade in place** — register with `legacy` (this device's old token, or one scanned from the old app's "Link another device" QR): username and password are added to that GUID's folder. Data doesn't move; old-app devices keep syncing with their token.
-- **Merge** — a logged-in user imports an old account (Settings → Import from old app, or "add them to my account" at login). The server merges its data (last write wins) and turns the old GUID into an alias, so its token now syncs into the account. Merged records keep their timestamps, so the server sets `resyncBefore`: any client whose `lastSyncedAt` predates the merge gets one full sync.
+- **Merge** — a logged-in user imports an old account ("add them to my account" at login). The server merges its data (last write wins) and turns the old GUID into an alias, so its token now syncs into the account. Merged records keep their timestamps, so the server sets `resyncBefore`: any client whose `lastSyncedAt` predates the merge gets one full sync.
 - A device holding a pre-account config (`{serverUrl, guid, secret}`) is migrated on load to `{ legacy: {guid, secret} }` and keeps syncing until the user upgrades.
 
 ---
@@ -317,11 +319,29 @@ store.register(username, password, email | null, legacy | null)
 store.logout(force?)              → false (and stays logged in) if unsynced changes can't be synced
 store.disconnectLegacy()          stop syncing an old token; keeps data
 store.deleteAccount(password)     keeps local data, without an account
-store.importLegacyAccount({ guid, secret })   merge an old account, then full sync
 store.changePassword(current, next)
 store.setEmail(email | null, password)
 store.refreshAccount()            re-read /auth/me; 401 → sessionExpired
 ```
+
+### History
+
+The History tab charts the active schema's exercises over Week, Month (default),
+6 months, 1 year or 5 years. `historyWindow()` splits the range into columns so
+it stays readable on a phone: days for Week/Month, Monday-to-Sunday weeks for
+6 months/1 year, calendar months for 5 years — the last column always holds
+today. A bar chart shows exercises logged per column; below it one row of cells
+per exercise, colored by **cadence**: how close the gap since that exercise's
+previous session came to the ideal. The ideal is halfway between the queue's
+yellow and red thresholds (`idealGap`; defaults 3 and 5 → 4 days; an
+exercise's `colorOverride` gives it its own). `cadenceDeviation` scores the gap
+−1 (far too soon) … 0 (ideal) … +1 (far too late), and `cadenceColor` maps the
+distance onto the queue's green → yellow → red. Gaps are measured against the
+exercise's whole history, not just the window. A week or month cell shows the
+average of its sessions; a session with no earlier one is an outlined cell.
+Tapping a bar or cell fills the readout above the
+chart; the collapsible "List by date" is the same data as text. The selected
+range is component state, not a setting, so it opens on Month every time.
 
 ---
 
@@ -344,8 +364,6 @@ urgencyColor(lastDate, yellow, red) → HSL string (green → yellow → red)
 ## CSS strategy
 
 Global design tokens (CSS variables, base `button`/`input` styles, shared utility classes like `.btn-icon`, `.btn-ghost`, `.btn-danger`, `.btn-outline`) are defined as `:global()` rules in the root `+layout.svelte`. This makes them available to every route and component without duplication. The form styles shared by the login modal and the `(auth)` pages live there too, under `.auth-card`.
-
-The About sheet follows the landing site's look (theprocesstracker.com): Iceland brand type, alternating `--bg` / `--bg-alt` bands, cards with `--shadow-card`.
 
 Component-specific layout and structural styles are scoped inside each component's `<style>` block (Svelte's default behaviour).
 

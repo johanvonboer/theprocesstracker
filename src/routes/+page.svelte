@@ -6,11 +6,12 @@
   import ExercisesTab from '$lib/components/ExercisesTab.svelte';
   import WorkoutQueueTab from '$lib/components/WorkoutQueueTab.svelte';
   import SettingsTab from '$lib/components/SettingsTab.svelte';
+  import HistoryTab from '$lib/components/HistoryTab.svelte';
   import AboutSheet from '$lib/components/AboutSheet.svelte';
   import AuthModal from '$lib/components/AuthModal.svelte';
   import LinkDeviceModal from '$lib/components/LinkDeviceModal.svelte';
 
-  type Tab = 'exercises' | 'priority' | 'settings';
+  type Tab = 'exercises' | 'priority' | 'history' | 'settings';
   // A share link lands on the Exercises tab, where the import preview opens.
   let activeTab = $state<Tab>(ui.pendingShareCode ? 'exercises' : 'priority');
   let tabInitialized = false;
@@ -121,6 +122,7 @@
     <nav class="tabs">
       <button class="tab" class:active={activeTab === 'priority'} onclick={() => (activeTab = 'priority')}>Workout queue</button>
       <button class="tab" class:active={activeTab === 'exercises'} onclick={() => (activeTab = 'exercises')}>Setup exercises</button>
+      <button class="tab" class:active={activeTab === 'history'} onclick={() => (activeTab = 'history')}>History</button>
       <button class="tab" class:active={activeTab === 'settings'} onclick={() => (activeTab = 'settings')}>Settings</button>
     </nav>
   </header>
@@ -129,6 +131,8 @@
     <ExercisesTab />
   {:else if activeTab === 'priority'}
     <WorkoutQueueTab />
+  {:else if activeTab === 'history'}
+    <HistoryTab />
   {:else if activeTab === 'settings'}
     <SettingsTab />
   {/if}
@@ -299,4 +303,14 @@
 
   .tab:hover { opacity: 0.8; background: none; }
   .tab.active { opacity: 1; border-bottom-color: var(--accent); }
+
+  /* Phones: four tabs don't fit on one line — let the two-word labels wrap. */
+  @media (max-width: 480px) {
+    .tab {
+      flex: 1 1 auto;
+      white-space: normal;
+      line-height: 1.25;
+      padding: 0.4rem 0.35rem;
+    }
+  }
 </style>
