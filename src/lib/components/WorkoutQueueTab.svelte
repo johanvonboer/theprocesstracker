@@ -21,7 +21,14 @@
   import { fmtDate, daysSince, urgencyColor, today } from '$lib/utils';
 
   const UNDO_MS = 5_000;
-  let undoPending = $state<Record<string, { timeoutId: ReturnType<typeof setTimeout>; entryId: string }>>({});
+  // The session as it stood before "Done" was pressed, so undo can resume it
+  // exactly — same phase, same running timer, same counts.
+  type SessionSnapshot = {
+    timer?: { phase: 'exercise' | 'rest'; startedAt: number };
+    sets?: number;
+    rest?: number;
+  };
+  let undoPending = $state<Record<string, { timeoutId: ReturnType<typeof setTimeout>; entryId: string; session: SessionSnapshot }>>({});
 
   // Ticks every second so rest timer displays stay reactive
   let now = $state(Date.now());
@@ -106,6 +113,11 @@
   function handleLogDate(exerciseId: string, date: string) {
     const isToday = date === today();
     const timer = store.activeTimers[exerciseId];
+    const session: SessionSnapshot = {
+      timer: timer ? { ...timer } : undefined,
+      sets: localSets[exerciseId],
+      rest: restTotals[exerciseId],
+    };
 
     // Close out the phase still running: an unfinished exercise period is a set
     // the user actually performed, an unfinished rest period is rest to bank.
@@ -127,6 +139,7 @@
     if (undoPending[exerciseId] !== undefined) clearTimeout(undoPending[exerciseId].timeoutId);
     undoPending[exerciseId] = {
       entryId: entry.id,
+      session,
       timeoutId: setTimeout(() => { delete undoPending[exerciseId]; }, UNDO_MS),
     };
   }
@@ -146,9 +159,11 @@
     const pending = undoPending[exerciseId];
     if (!pending) return;
     clearTimeout(pending.timeoutId);
-    const entry = store.entries.find(e => e.id === pending.entryId);
-    if (entry?.sets) localSets[exerciseId] = entry.sets;
-    if (entry?.restSeconds) restTotals[exerciseId] = entry.restSeconds;
+    const { timer, sets, rest } = pending.session;
+    if (sets !== undefined) localSets[exerciseId] = sets; else delete localSets[exerciseId];
+    if (rest !== undefined) restTotals[exerciseId] = rest; else delete restTotals[exerciseId];
+    // Original startedAt: the timer reads as if Done had never been pressed.
+    if (timer) store.restoreTimer(exerciseId, timer);
     store.removeEntry(pending.entryId);
     delete undoPending[exerciseId];
   }

@@ -471,6 +471,11 @@ class WorkoutStore {
     delete this.activeTimers[exerciseId];
   }
 
+  /** Put back a timer cleared by clearTimer, keeping its original start time. */
+  restoreTimer(exerciseId: string, timer: { phase: 'exercise' | 'rest'; startedAt: number }) {
+    this.activeTimers[exerciseId] = { ...timer };
+  }
+
   updateExerciseTargets(id: string, targetSets: number | undefined, targetReps: number | undefined) {
     const exercise = this.exercises.find(e => e.id === id);
     if (!exercise) return;

@@ -227,6 +227,7 @@ store.importSchema(payload)       → { schemaId, count }  (fresh ids, becomes a
 // Workout session timer (ephemeral, no save/sync)
 store.startPhase(exerciseId, 'exercise' | 'rest')
 store.clearTimer(exerciseId)
+store.restoreTimer(exerciseId, timer)   undo of "Done": puts the timer back as it was
 
 // Sync
 store.manualSync()
