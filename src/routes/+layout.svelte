@@ -13,7 +13,30 @@
 
   onMount(() => {
     if (!dev && 'serviceWorker' in navigator) registerServiceWorker();
+    if (!dev) loadVisitStatistics();
   });
+
+  /**
+   * Visits are counted by the Umami at stats.hellocyberspace.com (see the
+   * privacy policy): no cookies, and nothing from a URL that could identify
+   * someone. Query strings and #fragments (password reset and email tokens,
+   * login QR codes) are left out, and /s/<share code> is counted as /s.
+   */
+  function loadVisitStatistics() {
+    const withoutShareCode = (url?: string) => url?.replace(/^((?:https?:\/\/[^/]+)?\/s)\/[^/?#]+/, '$1');
+    (window as any).umamiBeforeSend = (_type: string, payload: { url?: string; referrer?: string }) => ({
+      ...payload,
+      url: withoutShareCode(payload.url),
+      referrer: withoutShareCode(payload.referrer),
+    });
+    const script = document.createElement('script');
+    script.src = 'https://stats.hellocyberspace.com/script.js';
+    script.dataset.websiteId = '270363eb-beb2-451b-afd0-db0eb398a6fb';
+    script.dataset.excludeSearch = 'true';
+    script.dataset.excludeHash = 'true';
+    script.dataset.beforeSend = 'umamiBeforeSend';
+    document.head.appendChild(script);
+  }
 
   /**
    * The service worker keeps the app openable offline. A new deploy installs a
