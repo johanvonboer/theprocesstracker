@@ -10,7 +10,7 @@ COPY . .
 RUN npm run build
 
 # ── Serve stage ────────────────────────────────────────────────────────────────
-FROM nginx:alpine
+FROM nginx:1.30-alpine
 
 COPY --from=builder /app/build /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
