@@ -9,7 +9,4 @@ node_modules
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 ideas.md
-src-tauri/gen/android/keystore.properties
-*.jks
-*.keystore
 .claude/settings.local.json
