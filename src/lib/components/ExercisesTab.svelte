@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { store } from '$lib/store.svelte';
-  import type { Exercise, WorkoutEntry } from '$lib/types';
+  import { store } from '#lib/store.svelte.ts';
+  import type { Exercise, WorkoutEntry } from '#lib/types.ts';
   import { PenLine, Trash2, Eye, EyeOff } from 'lucide-svelte';
   import SchemaBar from './SchemaBar.svelte';
-  import { fmtDate, today, urgencyColorFromDays } from '$lib/utils';
+  import { fmtDate, today, urgencyColorFromDays } from '#lib/utils.ts';
 
   // ── Add exercise ──────────────────────────────────────────────
   let newName = $state('');

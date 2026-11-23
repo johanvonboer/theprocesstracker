@@ -1,9 +1,9 @@
 <script lang="ts">
   import '@fontsource/iceland';
   import { onMount, type Snippet } from 'svelte';
-  import { dev } from '$app/environment';
-  import { store } from '$lib/store.svelte';
-  import { toasts, dismissToast, showToast } from '$lib/toasts.svelte';
+  import { dev } from '$app/env';
+  import { store } from '#lib/store.svelte.ts';
+  import { toasts, dismissToast, showToast } from '#lib/toasts.svelte.ts';
 
   let { children }: { children: Snippet } = $props();
 

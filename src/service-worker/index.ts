@@ -1,19 +1,16 @@
-/// <reference types="@sveltejs/kit" />
-/// <reference no-default-lib="true"/>
-/// <reference lib="esnext" />
-/// <reference lib="webworker" />
-
 // Keeps the app openable without a connection. Everything the app needs is
 // precached at install time, per build; data lives in localStorage and the
 // API is never cached, so the network is only ever needed for syncing.
-import { build, files, version } from '$service-worker';
-
-const sw = self as unknown as ServiceWorkerGlobalScope;
+import { immutable, assets } from '$app/manifest';
+import { version } from '$app/env';
+import { self as sw } from '$app/service-worker';
 
 const CACHE = `app-${version}`;
 /** The SPA shell (index.html). Every route renders from it. */
 const SHELL = '/';
-const ASSETS = [SHELL, ...build, ...files];
+// Manifest paths are relative to the base path, which is the site root here.
+const rooted = ({ path }: { path: string }) => '/' + path.replace(/^\//, '');
+const ASSETS = [SHELL, ...immutable.map(rooted), ...assets.map(rooted)];
 
 sw.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));

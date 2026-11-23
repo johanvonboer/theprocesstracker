@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { store } from '$lib/store.svelte';
-  import { parseLegacyCredentials, isLegacyShape } from '$lib/api';
-  import type { LegacyCredentials } from '$lib/types';
-  import { showToast } from '$lib/toasts.svelte';
-  import { closeOverlay, switchOverlay } from '$lib/ui.svelte';
+  import { store } from '#lib/store.svelte.ts';
+  import { parseLegacyCredentials, isLegacyShape } from '#lib/api.ts';
+  import type { LegacyCredentials } from '#lib/types.ts';
+  import { showToast } from '#lib/toasts.svelte.ts';
+  import { closeOverlay, switchOverlay } from '#lib/ui.svelte.ts';
   import QrScanOverlay from './QrScanOverlay.svelte';
   import { ScanLine, Check } from 'lucide-svelte';
 

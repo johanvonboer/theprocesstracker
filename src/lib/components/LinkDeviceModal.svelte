@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import QRCode from 'qrcode';
-  import { store } from '$lib/store.svelte';
-  import { createLoginLink, loginLinkUrl } from '$lib/api';
-  import { closeOverlay } from '$lib/ui.svelte';
+  import { store } from '#lib/store.svelte.ts';
+  import { createLoginLink, loginLinkUrl } from '#lib/api.ts';
+  import { closeOverlay } from '#lib/ui.svelte.ts';
   import Modal from './Modal.svelte';
   import { RefreshCw } from 'lucide-svelte';
 

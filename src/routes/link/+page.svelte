@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ui, showAppWithOverlay } from '$lib/ui.svelte';
+  import { ui, showAppWithOverlay } from '#lib/ui.svelte.ts';
 
   // A login QR code opened by a phone camera (theprocesstracker.com/link#<code>):
   // hand the code to the login form. Leaving this page replaces its history

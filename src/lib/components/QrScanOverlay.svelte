@@ -1,7 +1,7 @@
 <script lang="ts">
   import QrScanner from 'qr-scanner';
   import { ArrowLeft } from 'lucide-svelte';
-  import { showToast } from '$lib/toasts.svelte';
+  import { showToast } from '#lib/toasts.svelte.ts';
 
   // A generic widget rather than app UI, so unlike the tabs it takes props:
   // what to do with a scanned code, and how to close.

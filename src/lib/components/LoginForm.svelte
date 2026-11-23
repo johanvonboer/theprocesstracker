@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { store } from '$lib/store.svelte';
-  import * as api from '$lib/api';
-  import type { Account } from '$lib/types';
-  import { showToast } from '$lib/toasts.svelte';
-  import { ui, closeOverlay, switchOverlay } from '$lib/ui.svelte';
+  import { store } from '#lib/store.svelte.ts';
+  import * as api from '#lib/api.ts';
+  import type { Account } from '#lib/types.ts';
+  import { showToast } from '#lib/toasts.svelte.ts';
+  import { ui, closeOverlay, switchOverlay } from '#lib/ui.svelte.ts';
   import QrScanOverlay from './QrScanOverlay.svelte';
   import { ScanLine } from 'lucide-svelte';
 

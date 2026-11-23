@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { resetPassword } from '$lib/api';
+  import { resetPassword } from '#lib/api.ts';
 
   const MIN_PASSWORD = 8;
   const token = page.url.searchParams.get('token') ?? '';

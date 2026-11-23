@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { store } from '$lib/store.svelte';
+  import { store } from '#lib/store.svelte.ts';
   import QRCode from 'qrcode';
-  import { showToast } from '$lib/toasts.svelte';
-  import { ui } from '$lib/ui.svelte';
-  import { shareSchema, fetchSharedSchema, parseShareCode } from '$lib/share';
+  import { showToast } from '#lib/toasts.svelte.ts';
+  import { ui } from '#lib/ui.svelte.ts';
+  import { shareSchema, fetchSharedSchema, parseShareCode } from '#lib/share.ts';
   import QrScanOverlay from './QrScanOverlay.svelte';
-  import type { SharedSchemaPayload } from '$lib/types';
+  import type { SharedSchemaPayload } from '#lib/types.ts';
   import { PenLine, Trash2, Share2, ScanLine, Plus, Copy, ArrowLeft } from 'lucide-svelte';
 
   // ── Schema selection & editing ────────────────────────────────

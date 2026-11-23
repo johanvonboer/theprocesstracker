@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { store } from '$lib/store.svelte';
-  import type { Exercise } from '$lib/types';
+  import { store } from '#lib/store.svelte.ts';
+  import type { Exercise } from '#lib/types.ts';
   import type { AnimationConfig } from 'svelte/animate';
   import { expoInOut } from 'svelte/easing';
   import { Play, Pause, Check, EllipsisVertical } from 'lucide-svelte';
@@ -19,7 +19,7 @@
       css: (_t, u) => `transform: translate(${u * dx}px, ${u * dy}px)`,
     };
   }
-  import { fmtDate, daysSince, urgencyColor, today } from '$lib/utils';
+  import { fmtDate, daysSince, urgencyColor, today } from '#lib/utils.ts';
 
   const UNDO_MS = 5_000;
   let undoPending = $state<Record<string, { timeoutId: ReturnType<typeof setTimeout>; entryId: string }>>({});

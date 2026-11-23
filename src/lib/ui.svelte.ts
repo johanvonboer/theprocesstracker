@@ -16,7 +16,8 @@ export const ui = $state({
 // lives in shallow-routing history state rather than in `ui`, so the browser's
 // back button — Android's back gesture — closes it like a page.
 
-export const OVERLAYS = ['about', 'login', 'register', 'forgot-password', 'link-device'] as const;
+import { OVERLAYS } from './overlays.js';
+export { OVERLAYS };
 export type Overlay = (typeof OVERLAYS)[number];
 
 export function currentOverlay(): Overlay | null {

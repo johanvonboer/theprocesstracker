@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import { store } from '$lib/store.svelte';
-  import { verifyEmail } from '$lib/api';
+  import { store } from '#lib/store.svelte.ts';
+  import { verifyEmail } from '#lib/api.ts';
 
   const token = page.url.searchParams.get('token') ?? '';
   let status = $state<'working' | 'done' | 'error'>(token ? 'working' : 'error');

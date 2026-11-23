@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { store } from '$lib/store.svelte';
-  import type { Exercise } from '$lib/types';
-  import { today, fmtDate } from '$lib/utils';
+  import { store } from '#lib/store.svelte.ts';
+  import type { Exercise } from '#lib/types.ts';
+  import { today, fmtDate } from '#lib/utils.ts';
   import {
     HISTORY_RANGES, historyWindow, bucketIndex, daysBetween,
     idealGap, cadenceDeviation, cadenceColor, cadenceVerdict, fmtIdeal, type HistoryRange,
-  } from '$lib/history';
+  } from '#lib/history.ts';
 
   let range = $state<HistoryRange>('month');
   // The column (and exercise row, or null for the totals bar) the readout describes.

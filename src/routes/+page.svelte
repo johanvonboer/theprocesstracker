@@ -1,15 +1,15 @@
 <script lang="ts">
-  import { store } from '$lib/store.svelte';
-  import { ui, currentOverlay, openOverlay } from '$lib/ui.svelte';
+  import { store } from '#lib/store.svelte.ts';
+  import { ui, currentOverlay, openOverlay } from '#lib/ui.svelte.ts';
   import { Cloud, CloudOff, RefreshCw, WifiOff, LogIn, LogOut, Info, Sun, Moon, SunMoon } from 'lucide-svelte';
-  import { showToast } from '$lib/toasts.svelte';
-  import ExercisesTab from '$lib/components/ExercisesTab.svelte';
-  import WorkoutQueueTab from '$lib/components/WorkoutQueueTab.svelte';
-  import SettingsTab from '$lib/components/SettingsTab.svelte';
-  import HistoryTab from '$lib/components/HistoryTab.svelte';
-  import AboutSheet from '$lib/components/AboutSheet.svelte';
-  import AuthModal from '$lib/components/AuthModal.svelte';
-  import LinkDeviceModal from '$lib/components/LinkDeviceModal.svelte';
+  import { showToast } from '#lib/toasts.svelte.ts';
+  import ExercisesTab from '#lib/components/ExercisesTab.svelte';
+  import WorkoutQueueTab from '#lib/components/WorkoutQueueTab.svelte';
+  import SettingsTab from '#lib/components/SettingsTab.svelte';
+  import HistoryTab from '#lib/components/HistoryTab.svelte';
+  import AboutSheet from '#lib/components/AboutSheet.svelte';
+  import AuthModal from '#lib/components/AuthModal.svelte';
+  import LinkDeviceModal from '#lib/components/LinkDeviceModal.svelte';
 
   type Tab = 'exercises' | 'priority' | 'history' | 'settings';
   // A share link lands on the Exercises tab, where the import preview opens.

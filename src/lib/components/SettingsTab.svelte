@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { store } from '$lib/store.svelte';
-  import { urgencyColorFromDays } from '$lib/utils';
+  import { store } from '#lib/store.svelte.ts';
+  import { urgencyColorFromDays } from '#lib/utils.ts';
   import AccountSection from './AccountSection.svelte';
 </script>
 

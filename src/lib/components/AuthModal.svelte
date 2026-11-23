@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { currentOverlay, closeOverlay } from '$lib/ui.svelte';
+  import { currentOverlay, closeOverlay } from '#lib/ui.svelte.ts';
   import Modal from './Modal.svelte';
   import LoginForm from './LoginForm.svelte';
   import RegisterForm from './RegisterForm.svelte';

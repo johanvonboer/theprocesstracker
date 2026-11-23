@@ -2,8 +2,8 @@
 declare global {
   namespace App {
     interface PageState {
-      /** The overlay open over the app (see `$lib/ui.svelte`). */
-      overlay?: import('$lib/ui.svelte').Overlay;
+      /** The overlay open over the app (see `#lib/ui.svelte.ts`). */
+      overlay?: import('#lib/ui.svelte.ts').Overlay;
     }
   }
 }

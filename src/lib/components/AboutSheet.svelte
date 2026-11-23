@@ -1,6 +1,6 @@
 <script lang="ts">
   import { version } from '../../../package.json';
-  import { closeOverlay } from '$lib/ui.svelte';
+  import { closeOverlay } from '#lib/ui.svelte.ts';
   import Modal from './Modal.svelte';
   import FeedbackForm from './FeedbackForm.svelte';
   import PrivacyPolicy from './PrivacyPolicy.svelte';

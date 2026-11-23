@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { requestPasswordReset } from '$lib/api';
-  import { switchOverlay } from '$lib/ui.svelte';
+  import { requestPasswordReset } from '#lib/api.ts';
+  import { switchOverlay } from '#lib/ui.svelte.ts';
 
   let email = $state('');
   let busy = $state(false);

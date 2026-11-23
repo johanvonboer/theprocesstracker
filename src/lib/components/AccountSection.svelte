@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { store } from '$lib/store.svelte';
-  import { resendVerification } from '$lib/api';
-  import { showToast } from '$lib/toasts.svelte';
-  import { openOverlay } from '$lib/ui.svelte';
+  import { store } from '#lib/store.svelte.ts';
+  import { resendVerification } from '#lib/api.ts';
+  import { showToast } from '#lib/toasts.svelte.ts';
+  import { openOverlay } from '#lib/ui.svelte.ts';
   import { QrCode } from 'lucide-svelte';
 
   const MIN_PASSWORD = 8;
