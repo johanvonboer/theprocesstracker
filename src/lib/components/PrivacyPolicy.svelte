@@ -26,14 +26,14 @@
       <p>Earlier versions of the app created anonymous sync accounts made of a random GUID and secret key. These keep working, and can be turned into a regular account from the Settings tab.</p>
 
       <h3>Feedback form (optional)</h3>
-      <p>The feedback form lets you send us a message. You may optionally include your email address if you'd like a reply. Submitted messages and any email address you provide are used solely to respond to your feedback and are not shared with third parties.</p>
+      <p>The feedback form doesn't send anything itself: it opens your own email app with a message addressed to <a href="mailto:sysop@hellocyberspace.com">sysop@hellocyberspace.com</a>, and you decide whether to send it. Emails you send are used solely to respond to your feedback and are not shared with third parties.</p>
 
       <h3>Visit statistics, no ads</h3>
       <p>We count visits to the website with Umami, a privacy-friendly analytics tool that we run on our own server. It sets no cookies and stores nothing on your device. It records the page visited, the referring website, browser, operating system, device type, screen size, language and approximate location (country, region and city). Your IP address is used only to tell that location and to tell visits apart, and is not stored. The app leaves out anything in a link that could identify you or your data, such as share codes, login codes and email links. Nothing you log in the app is ever sent to it, and it is not shared with anyone.</p>
       <p>We use no advertising SDKs and no behavioural tracking.</p>
 
       <h3>Contact</h3>
-      <p>Questions about this policy? Use the feedback form above.</p>
+      <p>Questions about this policy? Use the feedback form above or email <a href="mailto:sysop@hellocyberspace.com">sysop@hellocyberspace.com</a>.</p>
     </div>
   {/if}
 </div>

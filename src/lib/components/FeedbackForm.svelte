@@ -1,38 +1,28 @@
 <script lang="ts">
-  import { API_URL } from '$lib/api';
+  import { version } from '../../../package.json';
 
-  const FEEDBACK_URL = `${API_URL}/api/v1/feedback`;
+  const FEEDBACK_EMAIL = 'sysop@hellocyberspace.com';
 
   let message = $state('');
-  let email = $state('');
-  let status = $state<'idle' | 'sending' | 'sent' | 'error'>('idle');
-  let errorText = $state('');
+  let status = $state<'idle' | 'sent'>('idle');
 
-  async function submitFeedback(e: SubmitEvent) {
+  function submitFeedback(e: SubmitEvent) {
     e.preventDefault();
     if (!message.trim()) return;
-    status = 'sending';
-    errorText = '';
-    try {
-      const res = await fetch(FEEDBACK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: message.trim(), email: email.trim() || undefined }),
-      });
-      if (!res.ok) throw new Error(`Server responded with ${res.status}`);
-      status = 'sent';
-      message = '';
-      email = '';
-    } catch (e) {
-      status = 'error';
-      errorText = e instanceof Error ? e.message : 'Something went wrong';
-    }
+    const subject = `The Process feedback (v${version})`;
+    // Hand the message to the user's own email app; nothing is sent from here.
+    window.location.href =
+      `mailto:${FEEDBACK_EMAIL}` +
+      `?subject=${encodeURIComponent(subject)}` +
+      `&body=${encodeURIComponent(message.trim())}`;
+    // Keep the message: the user may still cancel in their email app.
+    status = 'sent';
   }
 </script>
 
 {#if status === 'sent'}
   <div class="feedback-success">
-    Thanks — your feedback was received!
+    Your email app should have opened — just hit send there. Thanks!
     <button class="btn-link" onclick={() => (status = 'idle')}>Send more</button>
   </div>
 {:else}
@@ -44,25 +34,13 @@
         rows="5"
         placeholder="What's on your mind?"
         bind:value={message}
-        disabled={status === 'sending'}
       ></textarea>
     </div>
-    <div class="field">
-      <label for="fb-email">Email <span class="optional">(optional, if you'd like a reply)</span></label>
-      <input
-        id="fb-email"
-        type="email"
-        placeholder="you@example.com"
-        bind:value={email}
-        disabled={status === 'sending'}
-      />
-    </div>
-    {#if status === 'error'}
-      <p class="feedback-error">{errorText}</p>
-    {/if}
-    <button type="submit" disabled={status === 'sending' || !message.trim()}>
-      {status === 'sending' ? 'Sending…' : 'Send feedback'}
-    </button>
+    <p class="hint">
+      Opens your email app with a message to
+      <a href="mailto:{FEEDBACK_EMAIL}">{FEEDBACK_EMAIL}</a>.
+    </p>
+    <button type="submit" disabled={!message.trim()}>Send feedback</button>
   </form>
 {/if}
 
@@ -86,10 +64,10 @@
     font-weight: 500;
   }
 
-  .optional {
-    font-size: 0.8rem;
-    font-weight: 400;
-    opacity: 0.55;
+  .hint {
+    font-size: 0.85rem;
+    opacity: 0.7;
+    margin: 0;
   }
 
   .field textarea {
@@ -117,12 +95,6 @@
     padding: 0.75rem 1rem;
     font-size: 0.9rem;
     font-weight: 500;
-  }
-
-  .feedback-error {
-    font-size: 0.85rem;
-    color: #ef4444;
-    margin: 0;
   }
 
   .btn-link {
